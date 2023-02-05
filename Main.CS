@@ -10,6 +10,9 @@ class Robot
     // Might decide and hold its own target
     // Could also memorize targets, perhaps in a queue, to predict the next one after it has seen them all.
     public bool WasBoostUsed {get; private set;}
+    public Ray Heading {get; set;}
+    public Ray CurrentTarget {get; set;}
+    public Ray AdjustedTarget {get; set;}
     public Vector Velocity {get; set;}
     public Location LastLocation {get; private set;}
     private Location currentLocation;
@@ -65,39 +68,11 @@ class Robot
         return Velocity.AngleBetweenWithDirection(TargetDirection);
     }
 
-    // Maybe this should not take an angle and just use the AngleOffFromTarget method internally
-    public Location AdjustedTarget(double angle, double factor) {
-        if (factor > 1) {
-            Console.Error.WriteLine("I don't think we're supposed to have a factor above 1");
-        }
-        Console.Error.WriteLine($"target: {Target.Coords()}");
-        Vector projection = Velocity.ProjectOnto(TargetDirection);
-        Console.Error.WriteLine($"projection: {projection.Coords()}");
-        Vector adjustment = Velocity.Subtract(projection);
-        Console.Error.WriteLine($"adjustment: {adjustment.Coords()}");
-        adjustment = adjustment.Rotate(angle).Multiply(factor);
-        Console.Error.WriteLine($"adjustment: {adjustment.Coords()}");
-        return Target.Center.Add(adjustment);
-    }   
-
-    
-    public void ThrustTowaredsAdjustedTarget(int power, double factor = 1) {
-        Console.Error.WriteLine($"Velocity before thrust: {Velocity.Coords()}");
-        if (Velocity.x == 0 & Velocity.y == 0) {
-            ApplyThrust(target.Center, 100);
-        }
-        var angleOff = AngleOffFromTarget();
-        var adjustedTarget = AdjustedTarget(angleOff, factor);
-        if(power > 100) power = 100;
-        if(power < 0) power = 0;
-        Console.WriteLine($"{adjustedTarget.x} {adjustedTarget.y} {power}");
-    }
     // Could/should this take a Vector instead?
     public void ApplyThrust(Location target, int power) {
         if(power > 100) power = 100;
         if(power < 0) power = 0;
         Console.WriteLine($"{target.x} {target.y} {power}");
-        
     }
 
     public void Boost(Location target) {
@@ -118,18 +93,39 @@ class Ray {
 
     public Ray(Robot robot)
     {
-        L1 = robot.CurrentLocation;
-        Vector direction = robot.Velocity;
-        direction = direction.Multiply(100.0 / direction.Magnitude());
-        L2 = L1.Add(direction);
+        L1 = robot.LastLocation;
+        L2 = robot.CurrentLocation;
     }
 
-    public void Rotate(double angle)
+    public Ray Rotated(double angle)
     {
-        double x2_rotated = L1.x + (L2.x - L1.x) * Math.Cos(angle) - (L2.y - L1.y) * Math.Sin(angle);
-        double y2_rotated = L1.y + (L2.x - L1.x) * Math.Sin(angle) + (L2.y - L1.y) * Math.Cos(angle);
-        L2.x = (int)Math.Round(x2_rotated);
-        L2.y = (int)Math.Round(y2_rotated);
+        double cos = Math.Cos(angle);
+        double sin = Math.Sin(angle);
+
+        double x = cos * (L2.x - L1.x) - sin * (L2.y - L1.y) + L1.x;
+        double y = sin * (L2.x - L1.x) + cos * (L2.y - L1.y) + L1.y;
+        return new Ray(L1, new Location((int)Math.Round(x), (int)Math.Round(y)));
+    }
+
+    public double AngleBetween(Ray other)
+    {
+        double dotProduct = (L2.x - L1.x) * (other.L2.x - other.L1.x) + (L2.y - L1.y) * (other.L2.y - other.L1.y);
+        double magnitude1 = Math.Sqrt((L2.x - L1.x) * (L2.x - L1.x) + (L2.y - L1.y) * (L2.y - L1.y));
+        double magnitude2 = Math.Sqrt((other.L2.x - other.L1.x) * (other.L2.x - other.L1.x) + (other.L2.y - other.L1.y) * (other.L2.y - other.L1.y));
+        double cosine = dotProduct / (magnitude1 * magnitude2);
+        double angle = Math.Acos(cosine);
+        return angle;
+    }
+
+    public double AngleBetweenSigned(Ray other)
+    {
+        double angle = AngleBetween(other);
+        double crossProduct = (L2.x - L1.x) * (other.L2.y - other.L1.y) - (L2.y - L1.y) * (other.L2.x - other.L1.x);
+        if (crossProduct < 0)
+        {
+            angle = -angle;
+        }
+        return angle;
     }
 }
 
@@ -283,9 +279,6 @@ class Player
 
         int maxPower = 100;
         int initialDist = 0;
-        // int lastDist = 0;
-        // bool isCourseCorrectionActive = false; // This is getting code smelly
-        // bool isOnNewApproach = true; // This is getting code smelly
         
         var robot = new Robot();
         Location lastCheckLocation = new Location();
@@ -293,6 +286,8 @@ class Player
         Location lastLocation = new Location();
         Queue<Location> checkpoints = new Queue<Location>();
         Location target = new Location();
+
+        bool shouldAdjust = true;
 
         // game loop
         while (true)
@@ -366,15 +361,50 @@ class Player
             //     Console.Error.WriteLine("Why am I going slow");
             //     maxPower = 100;
             // }
-            
+
+            // if (nextCheckDist < 1600 & nextCheckDist < initialDist / 3) {
+            //     Console.Error.WriteLine("I'm slowig for approach");
+            //     maxPower = 20;
+                
+            //     // if (futureCheck.x != 0 && !isCourseCorrectionActive) {
+            //     //     Console.Error.WriteLine("I'm thinking ahead!");
+            //     //     Console.Error.WriteLine($"future X: {futureCheck.x}, future Y: {futureCheck.y}");
+            //     //     target = futureCheck;
+            //     // }
+            // } else if (maxPower < 50) {
+            //     Console.Error.WriteLine("Why am I going slow");
+            //     maxPower = 100;
+            // }
+
+            // Testing
+            robot.Heading = new Ray(robot);
+            Console.Error.WriteLine($"current heading: {robot.Heading.L2.Coords()}");
+            robot.CurrentTarget = new Ray(robot.CurrentLocation, nextCheckLocation);
+            Console.Error.WriteLine($"current target: {robot.CurrentTarget.L2.Coords()}");
+            double angleOff = robot.CurrentTarget.AngleBetweenSigned(robot.Heading);
+            Console.Error.WriteLine($"angleOff: {angleOff}");
+            var adjustedHeading = robot.CurrentTarget.Rotated(-angleOff);
+            if (Math.Abs(angleOff) > Math.PI / 2) {
+                Console.Error.WriteLine("I'm off by more than 90 degrees");
+                shouldAdjust = false;
+                // adjustedHeading = robot.CurrentTarget.Rotated(-angleOff / 3);
+            } else if (Math.Abs(angleOff) > Math.PI / 3) {
+                Console.Error.WriteLine("I'm off by more than a third");
+                // shouldAdjust = false;
+                // adjustedHeading = robot.CurrentTarget.Rotated(-angleOff / 2);
+            }
+            Console.Error.WriteLine($"adjsuted target: {adjustedHeading.L2.Coords()}");
+            // end testing
            
             if (nextCheckDist > 6750 & nextCheckpointAngle < 1 & !robot.WasBoostUsed) {
                 robot.Boost(target);
             } else {
-                // robot.ThrustTowaredsAdjustedTarget(maxPower, 0.1);
-                robot.ApplyThrust(target, maxPower);
-                // Console.Error.WriteLine($"actual target: {target.x}, {target.y}");
-                // robot.ThrustWithAngleOffset();
+                if (shouldAdjust) {
+                    robot.ApplyThrust(adjustedHeading.L2, maxPower);
+                } else {
+                    robot.ApplyThrust(nextCheckLocation, maxPower);
+                    shouldAdjust = true;
+                }
             }
             lastLocation = location;
         }
