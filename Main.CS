@@ -4,68 +4,177 @@ using System.IO;
 using System.Text;
 using System.Collections;
 using System.Collections.Generic;
+using System.Windows;
 
 class Robot
 {
     // Might decide and hold its own target
     // Could also memorize targets, perhaps in a queue, to predict the next one after it has seen them all.
+    public bool WasInitialized {get; private set;}
     public bool WasBoostUsed {get; private set;}
-    public Ray Heading {get; set;}
-    public Ray CurrentTarget {get; set;}
-    public Ray AdjustedTarget {get; set;}
-    public Vector Velocity {get; set;}
+    public bool HasMemorizedAllCheckpoints {get; private set;}
+    public int NextCheckpointDist {get; private set;}
+    public Ray Heading {get; private set;}
+    public Ray EnemyHeading {get; private set;}
+    public Ray TargetDirection {get; private set;}
+    public Vector Velocity {get; private set;}
     public Location LastLocation {get; private set;}
-    private Location currentLocation;
-    public Location CurrentLocation {
+    private Location enemy;
+    public Location Enemy {
         get {
-            return currentLocation;
+            return enemy;
         }
-        set {
-            if (LastLocation.x == 0 && LastLocation.y == 0) {
-                LastLocation = value;
+        private set {
+            if (enemy.x == 0 & enemy.y == 0) {
+                enemy = value;
+            } else {
+                EnemyHeading = new Ray(enemy, value);
+                enemy = value;
             }
-            Velocity = new Vector(LastLocation.x, LastLocation.y, value.x, value.y);
-            LastLocation = currentLocation;
-            currentLocation = value;
         }
     }
-    public Vector TargetDirection {get; private set;}
-    private Checkpoint target;
-    public Checkpoint Target {
+    private Location self;
+    public Location Self {
+        get {
+            return self;
+        }
+        private set {
+            if (LastLocation.x == 0 && LastLocation.y == 0) {
+                LastLocation = value; // Maybe I don't keep track of this. Don't need it for enemy....
+            }
+            Velocity = new Vector(LastLocation.x, LastLocation.y, value.x, value.y); // Do I even need this?
+            Heading = new Ray(LastLocation, value);
+            LastLocation = self;
+            self = value;
+        }
+    }
+    public Vector TargetVector {get; private set;}
+    private Location target;
+    public Location Target {
         get {
             return target;
         }
-        set {
-            TargetDirection = new Vector(currentLocation.x, currentLocation.y, value.Center.x, value.Center.y);
+        private set {
+            TargetVector = new Vector(self.x, self.y, value.x, value.y); // Do I even need this?
             target = value;
         }
     }
-    private Queue<Checkpoint> memorizedCheckpoints = new Queue<Checkpoint>();
-    private Checkpoint futureCheckpoint = new Checkpoint();
+    private Queue<Location> memorizedCheckpoints = new Queue<Location>();
+    private Location futureCheckpoint = new Location();
 
     public Robot() {
         LastLocation = new Location();
-        currentLocation = new Location();
+        self = new Location();
         Velocity = new Vector(0, 0);
-        target = new Checkpoint();
-        TargetDirection = new Vector(0, 0);
+        target = new Location();
+        TargetVector = new Vector(0, 0);
+        enemy = new Location();
     }
 
-    public void RememberCheckpoint(Checkpoint newCheckpoint) {
+    public void Initialize(Location nextCheckpoint, Location self, Location enemy, int nextCheckDist) {
+        Self = self;
+        Enemy = enemy;
+        Target = nextCheckpoint;
+        RememberCheckpoint(nextCheckpoint);
+        TargetDirection = new Ray(self, nextCheckpoint);
+        NextCheckpointDist = nextCheckDist;
+        if (nextCheckDist > 4000) {
+            Boost(nextCheckpoint);
+        } else {
+            ApplyThrust(nextCheckpoint, 100);
+        }
+        WasInitialized = true;
+    }
+    
+    public void TakeTurn(Location nextCheckpoint, Location self, Location enemy, int nextCheckDist) {
+        Self = self;
+        Enemy = enemy;
+        TargetDirection = new Ray(self, nextCheckpoint);
+        if (!Target.Equals(nextCheckpoint)) {
+            RememberCheckpoint(nextCheckpoint);
+            NextCheckpointDist = nextCheckDist; // Can make choices by comparing this to current one
+            Target = new Location(nextCheckpoint.x, nextCheckpoint.y);
+        }
+
+        var adjustedTarget = AdjustTargetDirection(TargetDirection);
+
+        // maybe do this combat check in another method
+        var enemyDirection = new Ray(Self, Enemy);
+        var enemyAngleFromTarget = TargetDirection.AngleBetween(enemyDirection);
+        var enemyHeadingAngleFromHeading = Heading.AngleBetweenSigned(EnemyHeading);
+        var enemyDistance = Math.Sqrt(Math.Pow(Enemy.x - Self.x, 2) + Math.Pow(Enemy.y - Self.y, 2));
+        Console.Error.WriteLine($"enemyAngle: {enemyAngleFromTarget}, enemyDistance: {enemyDistance}, enemyHeadingAngle: {enemyHeadingAngleFromHeading}");
+        if (enemyDistance < 1000 & enemyAngleFromTarget > 2 & enemyAngleFromTarget < 6) {
+            RaiseShield(adjustedTarget.L2);
+        } else if (nextCheckDist > 4750 & Math.Abs(Heading.AngleBetween(TargetDirection)) < Math.PI / 6 & !WasBoostUsed) {
+            Boost(adjustedTarget.L2);
+        } else if (HasMemorizedAllCheckpoints & nextCheckDist < 1650 & Velocity.Magnitude() > 800 ) {
+            var futureCheck = memorizedCheckpoints.Peek();
+            Console.Error.WriteLine($"Redirecting towards: {futureCheck.Loggable()}");
+            ApplyThrust(AdjustTargetDirection(new Ray(Self, futureCheck)).L2, 50);
+        } else if (nextCheckDist < 1800 & Velocity.Magnitude() > 700) {
+                ApplyThrust(adjustedTarget.L2, 30);
+        } else {
+            ApplyThrust(adjustedTarget.L2, 100);
+        }
+
+
+        // Copilot threw this out might experiment later
+        // else if (nextCheckDist > 6750 & adjustedTarget.AngleBetween(TargetDirection) > Math.PI / 2) {
+        //     ApplyThrust(adjustedTarget.L2, 100);
+        // } else if (nextCheckDist > 3000 & adjustedTarget.AngleBetween(TargetDirection) < Math.PI / 2) {
+        //     ApplyThrust(adjustedTarget.L2, 100);
+        // } else if (nextCheckDist > 3000 & adjustedTarget.AngleBetween(TargetDirection) > Math.PI / 2) {
+        //     ApplyThrust(adjustedTarget.L2, 50);
+        // } else if (nextCheckDist > 1000 & adjustedTarget.AngleBetween(TargetDirection) < Math.PI / 2) {
+        //     ApplyThrust(adjustedTarget.L2, 50);
+        // } else if (nextCheckDist > 1000 & adjustedTarget.AngleBetween(TargetDirection) > Math.PI / 2) {
+        //     ApplyThrust(adjustedTarget.L2, 25);
+        // } else if (nextCheckDist > 500 & adjustedTarget.AngleBetween(TargetDirection) < Math.PI / 2) {
+        //     ApplyThrust(adjustedTarget.L2, 25);
+        // } else if (nextCheckDist > 500 & adjustedTarget.AngleBetween(TargetDirection) > Math.PI / 2) {
+        //     ApplyThrust(adjustedTarget.L2, 10);
+        // } else if (nextCheckDist > 100 & adjustedTarget.AngleBetween(TargetDirection) < Math.PI / 2) {
+        //     ApplyThrust(adjustedTarget.L2, 10);
+        // } else if (nextCheckDist > 100 & adjustedTarget.AngleBetween(TargetDirection) > Math.PI / 2) {
+        //     ApplyThrust(adjustedTarget.L2, 5);
+        // } else if (nextCheckDist > 50 & adjustedTarget.AngleBetween(TargetDirection) < Math.PI / 2) {
+        //     ApplyThrust(adjustedTarget.L2, 5);
+        // } else if (nextCheckDist > 50 & adjustedTarget.AngleBetween(TargetDirection) > Math.PI / 2) {
+        //     ApplyThrust(adjustedTarget.L2,
+    }
+
+    private Ray AdjustTargetDirection(Ray target) {
+        double angleOff = target.AngleBetweenSigned(Heading);        
+        if (Math.Abs(angleOff) > Math.PI / 2 | double.IsNaN(angleOff)) {
+            Console.Error.WriteLine("Im' off by more than 90 degrees or have no angle to work with... so my algo bugs out. Using straight target instead.");
+            // adjustedTarget = TargetDirection;
+            return target;
+        } else if (Math.Abs(angleOff) > Math.PI / 3) {
+            Console.Error.WriteLine("Im' off by more than 60 degrees... Should I do anything different?");
+            return target.Rotated(-angleOff);
+            // adjustedTarget = TargetDirection.Rotated(-angleOff);
+        } else {
+            // If we're less than 60 degrees off, we'll adjust the target direction to be closer to the heading.
+            return target.Rotated(-angleOff);
+            // adjustedTarget = TargetDirection.Rotated(-angleOff / 2); // Copilot thought this would be good. Let's test it later.
+            // adjustedTarget = TargetDirection.Rotated(-angleOff);
+        }
+    }
+
+    public void RememberCheckpoint(Location newCheckpoint) {
+        Console.Error.WriteLine($"Remembering a new location: {newCheckpoint.Loggable()}");
         if (memorizedCheckpoints.Contains(newCheckpoint)) {
-            memorizedCheckpoints.Dequeue();
+            HasMemorizedAllCheckpoints = true;
+            var overflowCheck = memorizedCheckpoints.Dequeue();
             futureCheckpoint = memorizedCheckpoints.Peek();
-            Console.Error.WriteLine($"I can see the future: {futureCheckpoint.Center.x}, {futureCheckpoint.Center.y}");
+            Console.Error.WriteLine($"I can see the future: {futureCheckpoint.Loggable()} and past {overflowCheck.Loggable()}");
         }
         memorizedCheckpoints.Enqueue(newCheckpoint);
         // temp
-        foreach (Checkpoint checkpoint in memorizedCheckpoints) {
-            Console.Error.WriteLine($"{checkpoint.Center.x}, {checkpoint.Center.y}");
+        foreach (Location checkpoint in memorizedCheckpoints) {
+            Console.Error.WriteLine($"{checkpoint.x}, {checkpoint.y}");
         }
-    }
-
-    public double AngleOffFromTarget() {
-        return Velocity.AngleBetweenWithDirection(TargetDirection);
     }
 
     // Could/should this take a Vector instead?
@@ -79,6 +188,10 @@ class Robot
         Console.WriteLine($"{target.x} {target.y} BOOST");
         WasBoostUsed = true;
     }
+
+    public void RaiseShield(Location target) {
+        Console.WriteLine($"{target.x} {target.y} SHIELD");
+    }
 }
 
 class Ray {
@@ -91,11 +204,7 @@ class Ray {
         L2 = l2;
     }
 
-    public Ray(Robot robot)
-    {
-        L1 = robot.LastLocation;
-        L2 = robot.CurrentLocation;
-    }
+    public string Loggable() => $"L1: {L1.Loggable() }, L2: {L2.Loggable() }";
 
     public Ray Rotated(double angle)
     {
@@ -106,6 +215,12 @@ class Ray {
         double y = sin * (L2.x - L1.x) + cos * (L2.y - L1.y) + L1.y;
         return new Ray(L1, new Location((int)Math.Round(x), (int)Math.Round(y)));
     }
+
+    // public Ray Inverted()
+    // {
+
+    //     End = new Vector2(Start.X - (End.X - Start.X), Start.Y - (End.Y - Start.Y));
+    // }
 
     public double AngleBetween(Ray other)
     {
@@ -127,6 +242,7 @@ class Ray {
         }
         return angle;
     }
+
 }
 
 class Vector
@@ -144,7 +260,7 @@ class Vector
         y = y2 - y1;
     }
 
-    public string Coords(){
+    public string Loggable() {
         return $"{x}, {y}";
     }
     public Vector Subtract(Vector other) {
@@ -225,7 +341,7 @@ class Location
 
     public Location(){}
 
-    public string Coords(){
+    public string Loggable() {
         return $"{x}, {y}";
     }
 
@@ -251,22 +367,22 @@ class Location
     }
 }
 
-class Checkpoint
-{
-    public Location Center {get; set;}
-    public int Radius {get; set;}
+// class Checkpoint // Do I even need these? How relevant is that radius?
+// {
+//     public Location Center {get; set;}
+//     public int Radius {get; set;}
 
-    public string Coords(){
-        return $"{Center.x}, {Center.y}";
-    }
+//     public string Loggable() {
+//         return $"{Center.x}, {Center.y}";
+//     }
 
-    public Checkpoint(int x, int y, int r) {
-        Center = new Location(x, y);
-        Radius = r;
-    }
+//     public Checkpoint(int x, int y, int r) {
+//         Center = new Location(x, y);
+//         Radius = r;
+//     }
 
-    public Checkpoint(){}
-}
+//     public Checkpoint(){}
+// }
 /**
  * Auto-generated code below aims at helping you parse
  * the standard input according to the problem statement.
@@ -276,10 +392,6 @@ class Player
     static void Main(string[] args)
     {
         string[] inputs;
-
-        int maxPower = 100;
-        int initialDist = 0;
-        
         var robot = new Robot();
         Location lastCheckLocation = new Location();
         Location futureCheck = new Location();
@@ -287,7 +399,6 @@ class Player
         Queue<Location> checkpoints = new Queue<Location>();
         Location target = new Location();
 
-        bool shouldAdjust = true;
 
         // game loop
         while (true)
@@ -306,107 +417,20 @@ class Player
             int opponentY = int.Parse(inputs[1]);
 
             // MY CODE BELOW
-            var nextCheck = new Checkpoint(nextCheckpointX, nextCheckpointY, 600);
+            var nextCheck = new Location(nextCheckpointX, nextCheckpointY);
             var nextCheckLocation = new Location(nextCheckpointX, nextCheckpointY); // may drop this it's getting vestigial
-            var location = new Location(x, y);
-
-            robot.CurrentLocation = location;          
-            Console.Error.WriteLine($"robot: {robot}, location: {robot.CurrentLocation.x}, {robot.CurrentLocation.y}");
-            robot.Target = nextCheck;
-            Console.Error.WriteLine($"angle from target: {robot.AngleOffFromTarget()}");
-    
+            var self = new Location(x, y);  
+            var enemyLocation = new Location(opponentX, opponentY);
 
 
-
-            if (target.x == 0) {
-                // THE GAME STARTED
-                // Initialize some vals
-                // assumes a target will never have a zero coordinate, so this must be the start
-                target.x = nextCheckLocation.x;
-                target.y = nextCheckLocation.y;
-                lastCheckLocation.x = target.x;
-                lastCheckLocation.y = target.y;
-                initialDist = nextCheckDist;
-                checkpoints.Enqueue(new Location(nextCheckpointX, nextCheckpointY));
-                robot.RememberCheckpoint(nextCheck);
-            }
-
-            if (!nextCheckLocation.Equals(lastCheckLocation)) {
-                // A CHECK POINT WAS REACHED
-                // Do some things
-                robot.RememberCheckpoint(nextCheck);
-                if(checkpoints.Contains(nextCheckLocation)) {
-                    // We have all the checkpoints scouted
-                    checkpoints.Dequeue();
-                    futureCheck = checkpoints.Peek();
-                    Console.Error.WriteLine($"future X: {futureCheck.x}, future Y: {futureCheck.y}");
-                }
-                checkpoints.Enqueue(nextCheckLocation);
-                initialDist = nextCheckDist;
-                lastCheckLocation = nextCheckLocation;
-                target = nextCheckLocation;
-            }
-
-
-            // if (nextCheckDist < 2700 & nextCheckDist < initialDist / 3 & !isCourseCorrectionActive) {
-            //     Console.Error.WriteLine("I'm slowig for approach");
-            //     maxPower = 20;
-                
-            //     if (futureCheck.x != 0 && !isCourseCorrectionActive) {
-            //         Console.Error.WriteLine("I'm thinking ahead!");
-            //         Console.Error.WriteLine($"future X: {futureCheck.x}, future Y: {futureCheck.y}");
-            //         target = futureCheck;
-            //     }
-            // } else if (maxPower < 50) {
-            //     Console.Error.WriteLine("Why am I going slow");
-            //     maxPower = 100;
-            // }
-
-            // if (nextCheckDist < 1600 & nextCheckDist < initialDist / 3) {
-            //     Console.Error.WriteLine("I'm slowig for approach");
-            //     maxPower = 20;
-                
-            //     // if (futureCheck.x != 0 && !isCourseCorrectionActive) {
-            //     //     Console.Error.WriteLine("I'm thinking ahead!");
-            //     //     Console.Error.WriteLine($"future X: {futureCheck.x}, future Y: {futureCheck.y}");
-            //     //     target = futureCheck;
-            //     // }
-            // } else if (maxPower < 50) {
-            //     Console.Error.WriteLine("Why am I going slow");
-            //     maxPower = 100;
-            // }
-
-            // Testing
-            robot.Heading = new Ray(robot);
-            Console.Error.WriteLine($"current heading: {robot.Heading.L2.Coords()}");
-            robot.CurrentTarget = new Ray(robot.CurrentLocation, nextCheckLocation);
-            Console.Error.WriteLine($"current target: {robot.CurrentTarget.L2.Coords()}");
-            double angleOff = robot.CurrentTarget.AngleBetweenSigned(robot.Heading);
-            Console.Error.WriteLine($"angleOff: {angleOff}");
-            var adjustedHeading = robot.CurrentTarget.Rotated(-angleOff);
-            if (Math.Abs(angleOff) > Math.PI / 2) {
-                Console.Error.WriteLine("I'm off by more than 90 degrees");
-                shouldAdjust = false;
-                // adjustedHeading = robot.CurrentTarget.Rotated(-angleOff / 3);
-            } else if (Math.Abs(angleOff) > Math.PI / 3) {
-                Console.Error.WriteLine("I'm off by more than a third");
-                // shouldAdjust = false;
-                // adjustedHeading = robot.CurrentTarget.Rotated(-angleOff / 2);
-            }
-            Console.Error.WriteLine($"adjsuted target: {adjustedHeading.L2.Coords()}");
-            // end testing
-           
-            if (nextCheckDist > 6750 & nextCheckpointAngle < 1 & !robot.WasBoostUsed) {
-                robot.Boost(target);
+            if(!robot.WasInitialized) {
+                robot.Initialize(nextCheck, self, enemyLocation, nextCheckDist);
             } else {
-                if (shouldAdjust) {
-                    robot.ApplyThrust(adjustedHeading.L2, maxPower);
-                } else {
-                    robot.ApplyThrust(nextCheckLocation, maxPower);
-                    shouldAdjust = true;
-                }
+                robot.TakeTurn(nextCheck, self, enemyLocation, nextCheckDist);
             }
-            lastLocation = location;
+
+           
+            lastLocation = self;
         }
     }
 }
