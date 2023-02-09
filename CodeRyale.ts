@@ -4,47 +4,47 @@ let nextBarracksType: BarracksTypes = "KNIGHT";
 let gold = 0;
 const centerpoint = () => new Coords(1920 / 2, 1000 / 2);
 
+let units: Unit[] = []; // could track enemy units to decide what to build
+
 const sites: Record<number, Site> = {};
 const ownedBarracks = {} as Record<number, BarracksTypes>;
-// const totalUnitsCost = () =>
-//   Object.values(ownedBarracks).reduce(
-//     (acc, type) => acc + (type === "KNIGHT" ? 80 : 100),
-//     0
-//   );
+
+// ARCHER / KNIGHT
+const targetBuildRatio = 1 / 2;
+
+let ownedBarracksCounts: Record<BarracksTypes, number> = {
+  ARCHER: 0,
+  KNIGHT: 0,
+};
 
 class Unit {
   owner: number;
   location: Coords;
   health: number;
+  unitType: number;
 
-  constructor(owner: number, location: Coords, health: number) {
+  constructor(
+    owner: number,
+    location: Coords,
+    health: number,
+    unitType: number
+  ) {
     this.owner = owner;
     this.location = location;
     this.health = health;
+    this.unitType = unitType;
   }
 
   isMine = () => this.owner === 0;
 }
 
 class Queen extends Unit {
-  ownedBarracksCounts: Record<BarracksTypes, number> = {
-    ARCHER: 0,
-    KNIGHT: 0,
-  };
-  // ARCHER / KNIGHT
-  targetBuildRatio = 1 / 2;
-  //   targetBarracksCounts: Record<BarracksTypes, number> = {
-  //     ARCHER: 1,
-  //     KNIGHT: 1,
-  //   };
-  // how to tell actual types?
-
   constructor(owner: number, location: Coords, health: number) {
-    super(owner, location, health);
+    super(owner, location, health, -1);
   }
 
   takeTurn = () => {
-    const ownedBarracksCounts = Object.values(ownedBarracks).reduce(
+    const _ownedBarracksCounts = Object.values(ownedBarracks).reduce(
       (acc, type) => {
         acc[type] = acc[type] + 1;
         return acc;
@@ -55,88 +55,19 @@ class Queen extends Unit {
       } as Record<BarracksTypes, number>
     );
 
-    // const totalBarracks = Object.values(ownedBarracksCounts).reduce(
-    //   (acc, count) => acc + count,
-    //   0
-    // );
-
-    this.ownedBarracksCounts = ownedBarracksCounts;
-
-    console.error(JSON.stringify(this.ownedBarracksCounts, null, 2));
-
-    // const sitesList = Object.values(sites);
-    // const enemySite = nearestToEnemy();
-    // const centerSite = nearestToCenter();
+    ownedBarracksCounts = _ownedBarracksCounts;
     const nearbySite = nearestToMe();
-    const builtRatio = ownedBarracksCounts.ARCHER / ownedBarracksCounts.KNIGHT;
+    const builtRatio =
+      _ownedBarracksCounts.ARCHER / _ownedBarracksCounts.KNIGHT;
 
-    if (builtRatio < this.targetBuildRatio) {
+    if (builtRatio < targetBuildRatio) {
       nextBarracksType = "ARCHER";
     } else {
       nextBarracksType = "KNIGHT";
     }
 
     this.buildBarracks(nearbySite.id, nextBarracksType);
-
-    // if (this.builtCount == 0) {
-    //   nextBarracksType = "KNIGHT";
-    //   this.buildBarracks(centerSite.id, nextBarracksType);
-    // } else if (
-    //   this.targetBarracksCounts.ARCHER > this.ownedBarracksCounts.ARCHER
-    // ) {
-    //   nextBarracksType = "ARCHER";
-    //   if (gold >= totalUnitsCost()) {
-    //     this.buildBarracks(nearbySite.id, nextBarracksType);
-    //   } else {
-    //     const { x, y } = nearbySite.location;
-    //     this.moveToLocation(x, y);
-    //   }
-    // } else if (
-    //   this.targetBarracksCounts.KNIGHT > this.ownedBarracksCounts.KNIGHT
-    // ) {
-    //   nextBarracksType = "KNIGHT";
-    //   if (gold >= totalUnitsCost()) {
-    //     this.buildBarracks(enemySite.id, nextBarracksType);
-    //   } else {
-    //     const { x, y } = enemySite.location;
-    //     this.moveToLocation(x, y);
-    //   }
-    // } else {
-    //   this.attackNearestEnemySite(sitesList);
-    // }
   };
-
-  //   ownedSites = (sites: Site[]) => sites.filter((s) => s.owner === 0);
-
-  //   ownedTypesCounts = (sites: Site[]): Record<string, number> => {
-  //     const counts = this.ownedSites(sites)
-  //       .map((s) => s.type)
-  //       .filter((t) => t !== -1)
-  //       .reduce((acc, type) => {
-  //         acc[type] = (acc[type] || 0) + 1;
-  //         return acc;
-  //       }, {});
-
-  //     return counts;
-  //   };
-
-  // Could do another one to build nearest to enemy, or even to take over enemy sites
-  // but need more logic to decide where to train from before spamming free buildings
-
-  //   attackNearestEnemySite = (sites: Site[]) => {
-  //     const sorted = sites.sort(
-  //       (a, b) =>
-  //         this.location.distanceBetween(a.location) -
-  //         this.location.distanceBetween(b.location)
-  //     );
-
-  //     const enemySite = sorted.find((s) => s.owner === 1);
-  //     if (enemySite) {
-  //       this.attackSite(enemySite);
-  //     } else {
-  //       this.wait();
-  //     }
-  //   };
 
   attackSite = (site: Site) => {
     this.moveToLocation(site.location.x, site.location.y);
@@ -247,6 +178,34 @@ const nearestToCenter = () => {
   return sorted.find((s) => s.owner !== 0) || sorted[0];
 };
 
+const knightBarracksNearestEnemy = () => {
+  const knightBarracks = Object.entries(sites)
+    .filter((s) => ownedBarracks[s[0]] === "KNIGHT")
+    .map((s) => s[1]);
+
+  const nearestToEnemy = knightBarracks.sort(
+    (a, b) =>
+      enemyLocation.distanceBetween(a.location) -
+      enemyLocation.distanceBetween(b.location)
+  );
+
+  return nearestToEnemy[0];
+};
+
+const archerBarracksNearestQueen = () => {
+  const archerBarracks = Object.entries(sites)
+    .filter((s) => ownedBarracks[s[0]] === "ARCHER")
+    .map((s) => s[1]);
+
+  const nearestToSelf = archerBarracks.sort(
+    (a, b) =>
+      myQueen.location.distanceBetween(a.location) -
+      myQueen.location.distanceBetween(b.location)
+  );
+
+  return nearestToSelf[0];
+};
+
 // READ INIT STUFF
 const numSites: number = parseInt(readline());
 for (let i = 0; i < numSites; i++) {
@@ -260,6 +219,7 @@ for (let i = 0; i < numSites; i++) {
 
 // game loop
 while (true) {
+  units = [];
   // READ TURN STUFF
   var inputs: string[] = readline().split(" ");
   const inputGold: number = parseInt(inputs[0]);
@@ -294,13 +254,12 @@ while (true) {
       }
     }
 
+    units.push(new Unit(owner, new Coords(x, y), health, unitType));
+
     if (owner == 1 && unitType == -1) {
       enemyLocation.x = x;
       enemyLocation.y = y;
     }
-    // console.error(
-    //   `type: ${unitType} | loc: ${x}, ${y} | owner: ${owner} | health: ${health}`
-    // );
   }
 
   // Write an action using console.log()
@@ -310,16 +269,30 @@ while (true) {
   // Second line: A set of training instructions
   myQueen.takeTurn();
 
-  const ownedBarracks = Object.values(sites).filter(
-    (s) => s.owner === 0 && s.type === 2
-  );
+  const myUnits = units.filter((u) => u.isMine());
+  const currentUnitsRatio =
+    myUnits.filter((u) => u.unitType === 1).length /
+    myUnits.filter((u) => u.unitType === 0).length;
 
-  if (ownedBarracks.length > 0) {
-    // create a string of barracks ids separated by spaces
-    const barracksIds = ownedBarracks.map((b) => b.id).join(" ");
-    console.log(`TRAIN ${barracksIds}`);
+  console.error(currentUnitsRatio);
+
+  // train units based on ration vs target ratio
+  if (currentUnitsRatio < targetBuildRatio) {
+    // find nearest ARCHER barracks to self
+    const nearestToSelf = archerBarracksNearestQueen();
+    if (!!nearestToSelf) {
+      console.log(`TRAIN ${nearestToSelf.id}`);
+    } else {
+      console.log("TRAIN");
+    }
   } else {
-    console.log("TRAIN");
+    // find nearest KNIGHT barracks to enemy
+    const nearestToEnemy = knightBarracksNearestEnemy();
+    if (!!nearestToEnemy) {
+      console.log(`TRAIN ${nearestToEnemy.id}`);
+    } else {
+      console.log("TRAIN");
+    }
   }
 }
 
