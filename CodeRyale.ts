@@ -15,19 +15,36 @@ const ownedBuildings = {} as Record<number, BuildingTypes>;
 
 // ARCHER / KNIGHT / GIANT
 const targetTrainingRatio = {
-  KNIGHT: 0.35,
-  ARCHER: 0.4,
+  KNIGHT: 0.75,
+  ARCHER: 0.0,
   GIANT: 0.25,
 };
-const targetKnightBarracks = 1;
-const targetArcherBarracks = 1;
-const targetGiantBarracks = 1;
 
-let ownedBarracksCounts: Record<BarracksTypes, number> = {
+// Check if targetRatios add up to 1
+const targetTrainingRatioSum = Object.values(targetTrainingRatio).reduce(
+  (a, b) => a + b,
+  0
+);
+if (targetTrainingRatioSum !== 1) {
+  throw new Error("targetTrainingRatio does not add up to 1");
+}
+
+const targetKnightBarracks = 1;
+const targetArcherBarracks = 0;
+const targetGiantBarracks = 1;
+const targetTowers = 3;
+
+let ownedBuildingCounts: Record<BarracksTypes, number> = {
   ARCHER: 0,
   KNIGHT: 0,
   GIANT: 0,
 };
+
+let nextTowerIndex = 0;
+const cycleTowerIndex = () => {
+  nextTowerIndex = (nextTowerIndex + 1) % ownedTowerSites.length;
+};
+const ownedTowerSites: number[] = []; // Could maybe use this instead of keeping towers in ownedBuildingCounts
 
 class Unit {
   owner: number;
@@ -51,12 +68,21 @@ class Unit {
 }
 
 class Queen extends Unit {
+  touchedSite: number;
   constructor(owner: number, location: Coords, health: number) {
     super(owner, location, health, -1);
   }
 
   attackSite = (site: Site) => {
     this.moveToLocation(site.location.x, site.location.y);
+  };
+
+  expandTowers = () => {
+    // cycle through all owned towers by calling buildTower on each until I need to build something else
+    this.buildTower(ownedTowerSites[nextTowerIndex]);
+    if (this.touchedSite === ownedTowerSites[nextTowerIndex]) {
+      cycleTowerIndex();
+    }
   };
 
   wait = () => console.log("WAIT");
@@ -100,6 +126,20 @@ class Site {
       if (this.owner === 0) {
         // it was mine
         delete ownedBuildings[this.id];
+      }
+    }
+    if (type == 1 && this.type !== 1) {
+      // a new Tower was built
+      if (owner === 0) {
+        // it was mine
+        ownedTowerSites.push(this.id);
+      }
+    }
+    if (this.type === 1 && type !== 1) {
+      // a Tower was destroyed
+      if (this.owner === 0) {
+        // it was mine
+        ownedTowerSites.splice(ownedTowerSites.indexOf(this.id), 1);
       }
     }
 
@@ -218,7 +258,7 @@ const giantBarracksNearestTower = () => {
 // GAME LOGIC
 
 const queenTurn = () => {
-  ownedBarracksCounts = Object.values(ownedBuildings).reduce(
+  ownedBuildingCounts = Object.values(ownedBuildings).reduce(
     (acc, type) => {
       acc[type] = acc[type] + 1;
       return acc;
@@ -232,20 +272,20 @@ const queenTurn = () => {
 
   const nearbySite = nearestToMe();
 
-  console.error(JSON.stringify(ownedBarracksCounts, null, 2));
-
-  if (ownedBarracksCounts.ARCHER < targetArcherBarracks) {
+  if (ownedBuildingCounts.ARCHER < targetArcherBarracks) {
     nextBuildingType = "ARCHER";
     myQueen.buildBarracks(nearbySite.id, nextBuildingType);
-  } else if (ownedBarracksCounts.KNIGHT < targetKnightBarracks) {
+  } else if (ownedBuildingCounts.KNIGHT < targetKnightBarracks) {
     nextBuildingType = "KNIGHT";
     myQueen.buildBarracks(nearbySite.id, nextBuildingType);
-  } else if (ownedBarracksCounts.GIANT < targetGiantBarracks) {
+  } else if (ownedBuildingCounts.GIANT < targetGiantBarracks) {
     nextBuildingType = "GIANT";
     myQueen.buildBarracks(nearbySite.id, nextBuildingType);
-  } else {
+  } else if (ownedTowerSites.length < targetTowers) {
     nextBuildingType = "TOWER";
     myQueen.buildTower(nearbySite.id);
+  } else {
+    myQueen.expandTowers();
   }
 
   //   myQueen.buildBarracks(nearbySite.id, nextBuildingType);
@@ -313,6 +353,8 @@ while (true) {
   var inputs: string[] = readline().split(" ");
   const inputGold: number = parseInt(inputs[0]);
   const touchedSite: number = parseInt(inputs[1]); // -1 if none
+  myQueen.touchedSite = touchedSite;
+
   gold = inputGold;
   for (let i = 0; i < numSites; i++) {
     var inputs: string[] = readline().split(" ");
