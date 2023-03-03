@@ -1,0 +1,28 @@
+{
+  "name": "coding-games",
+  "version": "1.0.0",
+  "description": "A repo or CodeinGame.com projects",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Methodician/codingame.git"
+  },
+  "keywords": [
+    "code",
+    "games",
+    "codewars",
+    "codingame",
+    "codingame",
+    "programming",
+    "challenge"
+  ],
+  "author": "Methodician",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Methodician/codingame/issues"
+  },
+  "homepage": "https://github.com/Methodician/codingame#readme"
+}
