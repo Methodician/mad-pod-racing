@@ -2,7 +2,15 @@
  * Save humans, destroy zombies!
  **/
 const GUN_RANGE = 2000;
-const ZOMBIE_RANGE = 400;
+// distance per turn
+const ASH_SPEED = 1000;
+const ZOMBIE_SPEED = 400;
+
+type NearnessIndicator = {
+  distance: number;
+  index: number;
+  position: Position;
+};
 
 class Position {
   x: number;
@@ -23,19 +31,31 @@ class Position {
     return a.distanceTo(b);
   }
 
-  nearest(locations: Position[]) {
-    return locations.reduce(
+  nearest(positions: Position[]) {
+    return positions.reduce(
       (nearest, location, index) => {
         const distance = this.distanceTo(location);
         if (distance < nearest.distance) {
           nearest.distance = distance;
-          nearest.location = location;
+          nearest.position = location;
           nearest.index = index;
         }
         return nearest;
       },
-      { distance: Number.MAX_VALUE, location: locations[0], index: 0 }
+      {
+        distance: Number.MAX_VALUE,
+        index: 0,
+        position: positions[0],
+      } as NearnessIndicator
     );
+  }
+
+  // number of turns to reach reach another position at a given speed
+  tunsFrom(other: Position, speed: number, range: number = 0) {
+    if (this.distanceTo(other) <= range) {
+      return 0;
+    }
+    return (this.distanceTo(other) - range) / speed;
   }
 }
 
@@ -46,6 +66,7 @@ class Human {
   constructor(id: number, x: number, y: number) {
     this.id = id;
     this.position = new Position(x, y);
+    // console.error(`human ${id} at ${x} ${y}`);
   }
 }
 
@@ -74,24 +95,52 @@ class Player {
   }
 
   takeTurn = (humans: Human[], zombies: Zombie[]) => {
-    let targetZombie: Zombie | undefined;
-    let smallestZombieDistance = Number.MAX_VALUE;
+    // Could target the location the zombie will be after the number of turns it takes to reach that location
+    // let targetLocation = this.position;
+    let targetZombie =
+      zombies[
+        this.position.nearest(zombies.map((zombie) => zombie.position)).index
+      ];
+    let minTurnsAshCanBeat = Number.MAX_VALUE;
+    let humanToSave = humans[0];
 
+    // find the zombie closest to a human that Ash can reach in time
+    // Could take clustered humans into account to save largest number of humans
     for (const human of humans) {
-      const nearestZombie = human.position.nearest(
-        zombies.map((zombie) => zombie.position)
+      const nearestZombie =
+        zombies[
+          human.position.nearest(zombies.map((zombie) => zombie.position)).index
+        ];
+
+      const ashTurnsToReach = this.position.tunsFrom(
+        human.position,
+        ASH_SPEED,
+        GUN_RANGE
       );
-      if (nearestZombie.distance < smallestZombieDistance) {
-        targetZombie = zombies[nearestZombie.index];
-        smallestZombieDistance = Number.MAX_VALUE;
+
+      const zombieTurnsToReach = nearestZombie.position.tunsFrom(
+        human.position,
+        ZOMBIE_SPEED
+      );
+
+      if (
+        zombieTurnsToReach > ashTurnsToReach &&
+        zombieTurnsToReach < minTurnsAshCanBeat
+      ) {
+        targetZombie = nearestZombie;
+        minTurnsAshCanBeat = zombieTurnsToReach;
+        humanToSave = human;
+        console.error(`targeting zombie ${targetZombie.id}`);
+        console.error(`turns to reach: ${zombieTurnsToReach}`);
       }
     }
 
-    if (!targetZombie) {
-      return;
-    }
+    console.error(`current position: ${this.position.x} ${this.position.y}`);
+    console.error(
+      `human position: ${humanToSave.position.x} ${humanToSave.position.y}`
+    );
 
-    if (smallestZombieDistance > ZOMBIE_RANGE) {
+    if (targetZombie) {
       this.move(targetZombie.nextPosition.x, targetZombie.nextPosition.y);
     } else {
       this.move(this.position.x, this.position.y);
