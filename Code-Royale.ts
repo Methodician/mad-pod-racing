@@ -217,28 +217,6 @@ namespace CodeRoyale {
 
   type SiteTypeId = -1 | 0 | 1 | 2;
   type SiteType = "MINE" | "TOWER" | "BARRACKS" | "UNKNOWN";
-
-  interface Site {
-    id: number;
-    goldRemaining: number;
-    maxMineSize: number;
-    radius: number;
-    owner: PlayerId;
-    param1: number;
-    param2: number;
-    position: Position;
-    siteType: SiteType;
-
-    update: (update: SiteUpdate) => void;
-    isNotOurs: boolean;
-    isFriendly: boolean;
-    isHostile: boolean;
-    isUnowned: boolean;
-    isTower: boolean;
-    isBarracks: boolean;
-    isGoldMine: boolean;
-  }
-
   interface SiteUpdate {
     id: number;
     goldRemaining: number;
@@ -255,9 +233,11 @@ namespace CodeRoyale {
       x: number;
       y: number;
     };
-    site?: StructureType;
+    site?: Site;
   }
-  class BaseSite implements Site {
+  type BarracksType = "KNIGHT" | "ARCHER" | "GIANT";
+
+  class Site {
     id: number;
     goldRemaining: number = -1;
     maxMineSize: number = -1;
@@ -345,66 +325,38 @@ namespace CodeRoyale {
       return this.siteType === "TOWER";
     }
 
+    get towerSpecs() {
+      return {
+        hp: this.param1,
+        range: this.param2,
+        isMaxedOut: this.param1 >= this.param2,
+      };
+    }
+
     get isBarracks() {
       return this.siteType === "BARRACKS";
+    }
+
+    get barracksSpecs(): {
+      type: BarracksType;
+      turnsUntilCanTrain: number;
+    } {
+      return {
+        type:
+          this.param2 === 0 ? "KNIGHT" : this.param2 === 1 ? "ARCHER" : "GIANT",
+        turnsUntilCanTrain: this.param1,
+      };
     }
 
     get isGoldMine() {
       return this.siteType === "MINE";
     }
-  }
 
-  type BarracksType = "KNIGHT" | "ARCHER" | "GIANT";
-  class Barracks extends BaseSite implements Site {
-    private barracksTypeMap: Record<number, BarracksType> = {
-      "0": "KNIGHT",
-      "1": "ARCHER",
-      "2": "GIANT",
-    };
-    get barracksType(): BarracksType {
-      return this.barracksTypeMap[this.param2];
-    }
-    get turnsUntilCanTrain(): number {
-      return this.param1;
-    }
-
-    constructor(constructor: SiteConstructor) {
-      super(constructor);
-    }
-  }
-
-  class Tower extends BaseSite implements Site {
-    get hp(): number {
-      return this.param1;
-    }
-
-    // I think if we know the max of this, we can fix isMaxedOut.
-    get range(): number {
-      return this.param2;
-    }
-
-    // No idea if this is right but it kinda works.
-    get isMaxedOut(): boolean {
-      console.error(`p1: ${this.param1}, p2: ${this.param2}`);
-      return this.param1 >= this.param2;
-    }
-
-    constructor(constructor: SiteConstructor) {
-      super(constructor);
-    }
-  }
-
-  class GoldMine extends BaseSite implements Site {
-    get incomeRate(): number {
-      return this.param1;
-    }
-
-    get isMaxedOut(): boolean {
-      return this.param1 >= this.maxMineSize;
-    }
-
-    constructor(constructor: SiteConstructor) {
-      super(constructor);
+    get goldMineSpecs() {
+      return {
+        incomeRate: this.param1,
+        isMaxedOut: this.param1 >= this.maxMineSize,
+      };
     }
   }
 
@@ -503,8 +455,9 @@ namespace CodeRoyale {
     };
 
     think = (): void => {
+      // getting next strategy first accounts for first-move and
+      // maybe some race conditions between turns
       this.strategy = this.strategy.nextStrategy();
-
       this.strategy.execute();
     };
   }
@@ -554,11 +507,11 @@ namespace CodeRoyale {
     };
   }
 
-  const shouldExpandTower = (site: Tower) =>
-    !!site && site.isTower && site.isFriendly && !(site as Tower).isMaxedOut;
+  const shouldExpandTower = (site: Site) =>
+    !!site && site.isTower && site.isFriendly && !site.towerSpecs.isMaxedOut;
 
   const shouldExpandGoldMine = (site: Site) =>
-    site.isGoldMine && site.isFriendly && !(site as GoldMine).isMaxedOut;
+    site.isGoldMine && site.isFriendly && site.goldMineSpecs.isMaxedOut;
 
   class SiteCaptureStrategy implements Strategy {
     nextStrategy = (): Strategy => {
@@ -566,23 +519,8 @@ namespace CodeRoyale {
         Queen.getInstance().touchedSite
       );
 
-      console.error(`shouldExpand: ${shouldExpandTower(touchedSite as Tower)}`);
-      if (
-        shouldExpandTower(
-          // touchedSite as Tower
-          new Tower({
-            constructor: {
-              id: touchedSite.id,
-              radius: touchedSite.radius,
-              x: touchedSite.position.x,
-              y: touchedSite.position.y,
-            },
-            site: touchedSite,
-          })
-        )
-      ) {
+      if (shouldExpandTower(touchedSite)) {
         return new TowerExpansionStrategy();
-        // return new ExploreStrategy();
       }
       return new ExploreStrategy();
     };
@@ -606,19 +544,7 @@ namespace CodeRoyale {
       );
       if (!touchedSite) {
         return new ExploreStrategy();
-      } else if (
-        shouldExpandTower(
-          new Tower({
-            constructor: {
-              id: touchedSite.id,
-              radius: touchedSite.radius,
-              x: touchedSite.position.x,
-              y: touchedSite.position.y,
-            },
-            site: touchedSite,
-          })
-        )
-      ) {
+      } else if (shouldExpandTower(touchedSite)) {
         return new TowerExpansionStrategy();
       }
       return new ExploreStrategy();
@@ -628,19 +554,7 @@ namespace CodeRoyale {
       console.error("Expanding");
       const queen = Queen.getInstance();
       const touchedSite = SiteTracker.getInstance().getSite(queen.touchedSite);
-      if (
-        shouldExpandTower(
-          new Tower({
-            constructor: {
-              id: touchedSite.id,
-              radius: touchedSite.radius,
-              x: touchedSite.position.x,
-              y: touchedSite.position.y,
-            },
-            site: touchedSite,
-          })
-        )
-      ) {
+      if (shouldExpandTower(touchedSite)) {
         queen.buildTower(queen.touchedSite);
       } else {
         approachNearbyBuildingSite();
@@ -707,7 +621,9 @@ namespace CodeRoyale {
       }
     }
 
-    takeTurn = () => {};
+    takeTurn = () => {
+      throw new Error("Method not implemented.");
+    };
 
     move = (target: Position) => {
       console.error(`Moving target: ${target.x}, ${target.y}`);
@@ -756,7 +672,9 @@ namespace CodeRoyale {
 
   type UnitTypeNeeded = "KNIGHT" | "ARCHER" | "GIANT" | "NONE";
   class Trainer {
-    private constructor() {}
+    private constructor() {
+      throw new Error("Trainer is not implemented");
+    }
   }
 
   class UnitTracker {
@@ -833,10 +751,9 @@ namespace CodeRoyale {
     }
   }
 
-  type StructureType = Site | Barracks | Tower | GoldMine;
   class SiteTracker {
     private static instance: SiteTracker;
-    private sitesById: Record<number, StructureType> = {};
+    private sitesById: Record<number, Site> = {};
 
     private constructor() {}
 
@@ -847,54 +764,54 @@ namespace CodeRoyale {
       return SiteTracker.instance;
     }
 
-    addSite = (site: StructureType) => {
+    addSite = (site: Site) => {
       this.sitesById[site.id] = site;
     };
 
-    setSite = (site: StructureType) => {};
+    setSite = (site: Site) => {
+      this.sitesById[site.id] = site;
+    };
 
-    get sites(): StructureType[] {
+    get allSites(): Site[] {
       return Object.values(this.sitesById);
     }
 
-    getSite<T extends StructureType>(id: number) {
+    getSite<T extends Site>(id: number) {
       return this.sitesById[id] as T;
     }
 
     get friendlySites() {
-      return this.sites.filter((site) => site.isFriendly);
+      return this.allSites.filter((site) => site.isFriendly);
     }
 
     get hostileSites() {
-      return this.sites.filter((site) => site.isHostile);
+      return this.allSites.filter((site) => site.isHostile);
     }
 
     get unownedSites() {
-      return this.sites.filter((site) => site.isUnowned);
+      return this.allSites.filter((site) => site.isUnowned);
     }
 
     get hostileTowers() {
-      return this.hostileSites.filter((site) => site.isTower) as Tower[];
+      return this.hostileSites.filter((site) => site.isTower);
     }
 
     get friendlyKnightBarracks() {
       return this.friendlySites.filter(
-        (site) =>
-          site.isBarracks && (site as Barracks).barracksType === "KNIGHT"
-      ) as Barracks[];
+        (site) => site.isBarracks && site.barracksSpecs.type === "KNIGHT"
+      );
     }
 
     get friendlyArcherBarracks() {
       return this.friendlySites.filter(
-        (site) =>
-          site.isBarracks && (site as Barracks).barracksType === "ARCHER"
-      ) as Barracks[];
+        (site) => site.isBarracks && site.barracksSpecs.type === "ARCHER"
+      );
     }
 
     get friendlyGiantBarracks() {
       return this.friendlySites.filter(
-        (site) => site.isBarracks && (site as Barracks).barracksType === "GIANT"
-      ) as Barracks[];
+        (site) => site.isBarracks && site.barracksSpecs.type === "GIANT"
+      );
     }
 
     get unownedSafeBuildingSites() {
@@ -902,8 +819,8 @@ namespace CodeRoyale {
       return this.unownedSites.filter((site) => {
         const isSafe = hostileTowers.every(
           (tower) =>
-            tower.position.distanceTo(site.position) > tower.range - 100 &&
-            !site.isHostile
+            tower.position.distanceTo(site.position) >
+              tower.towerSpecs.range - 100 && !site.isHostile
         );
         return isSafe;
       });
@@ -911,18 +828,11 @@ namespace CodeRoyale {
 
     get allSafeBuildingSites() {
       const hostileTowers = this.hostileTowers;
-      return this.sites.filter((site) => {
+      return this.allSites.filter((site) => {
         const isSafe = hostileTowers.every(
           (tower) =>
-            tower.position.distanceTo(site.position) < tower.range - 100
-          // {
-          //   if (tower.position.distanceTo(site.position) < tower.range - 100) {
-          //     return false;
-          //   }
-          //   if (site.isFriendly) {
-          //     return true;
-          //   }
-          // }
+            tower.position.distanceTo(site.position) <
+            tower.towerSpecs.range - 100
         );
         return isSafe;
       });
@@ -980,30 +890,14 @@ namespace CodeRoyale {
 
     addSite = (constructor: SiteConstructor) => {
       const tracker = SiteTracker.getInstance();
-      tracker.addSite(new BaseSite(constructor));
+      tracker.addSite(new Site(constructor));
     };
 
-    updateSite = (updates: SiteUpdate) => {
+    updateSite = (update: SiteUpdate) => {
       const tracker = SiteTracker.getInstance();
-      let site = tracker.getSite(updates.id);
-      site.update(updates);
-      switch (updates.siteType) {
-        case -1:
-          site = site as BaseSite;
-          break;
-        case 0:
-          site = site as GoldMine;
-          break;
-        case 1:
-          site = site as Tower;
-          break;
-        case 2:
-          site = site as Barracks;
-          break;
-        default:
-          break;
-      }
-      tracker.setSite(site);
+      const site = tracker.getSite(update.id);
+      site.update(update);
+      tracker.setSite(site); // is this even necessary?
     };
 
     resetUnits = () => {
@@ -1062,7 +956,7 @@ namespace CodeRoyale {
       const siteId: number = parseInt(inputs[0]);
       const goldRemaining: number = parseInt(inputs[1]); // -1 if unknown
       const maxMineSize: number = parseInt(inputs[2]); // -1 if unknown
-      const structureTypeId = parseInt(inputs[3]) as SiteTypeId; // -1 = No structure, 0 = Goldmine, 1 = Tower, 2 = Barracks
+      const siteType = parseInt(inputs[3]) as SiteTypeId; // -1 = No structure, 0 = Goldmine, 1 = Tower, 2 = Barracks
       const owner = parseInt(inputs[4]) as PlayerId; // -1 = No structure, 0 = Friendly, 1 = Enemy
       const param1: number = parseInt(inputs[5]);
       const param2: number = parseInt(inputs[6]);
@@ -1070,7 +964,7 @@ namespace CodeRoyale {
         id: siteId,
         goldRemaining,
         maxMineSize,
-        siteType: structureTypeId,
+        siteType,
         owner,
         param1,
         param2,
