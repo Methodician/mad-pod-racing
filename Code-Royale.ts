@@ -227,29 +227,35 @@ namespace CodeRoyale {
     param1: number;
     param2: number;
     position: Position;
-    structureType: SiteType;
+    siteType: SiteType;
 
     update: (update: SiteUpdate) => void;
-    isNotOurs: () => boolean;
-    isFriendly: () => boolean;
-    isHostile: () => boolean;
-    isUnowned: () => boolean;
+    isNotOurs: boolean;
+    isFriendly: boolean;
+    isHostile: boolean;
+    isUnowned: boolean;
+    isTower: boolean;
+    isBarracks: boolean;
+    isGoldMine: boolean;
   }
 
   interface SiteUpdate {
     id: number;
     goldRemaining: number;
     maxMineSize: number;
-    structureTypeId: SiteTypeId;
+    siteType: SiteTypeId | SiteType;
     owner: PlayerId;
     param1: number;
     param2: number;
   }
   interface SiteConstructor {
-    id: number;
-    radius: number;
-    x: number;
-    y: number;
+    constructor: {
+      id: number;
+      radius: number;
+      x: number;
+      y: number;
+    };
+    site?: StructureType;
   }
   class BaseSite implements Site {
     id: number;
@@ -260,48 +266,92 @@ namespace CodeRoyale {
     param1: number = -1;
     param2: number = -1;
     position: Position;
+    siteType: SiteType = "UNKNOWN";
 
-    private siteTypeMap: Record<SiteTypeId, SiteType> = {
-      "-1": "UNKNOWN",
-      "0": "MINE",
-      "1": "TOWER",
-      "2": "BARRACKS",
-    };
-    private _structureTypeId: SiteTypeId = -1;
-    get structureType(): SiteType {
-      return this.siteTypeMap[this._structureTypeId];
-    }
-
-    constructor({ id, radius, x, y }: SiteConstructor) {
+    constructor(siteConstructor: SiteConstructor) {
+      const { id, radius, x, y } = siteConstructor.constructor;
       this.id = id;
       this.radius = radius;
       this.position = new Position(x, y);
+      if (siteConstructor.site) {
+        const {
+          id,
+          goldRemaining,
+          maxMineSize,
+          siteType,
+          owner,
+          param1,
+          param2,
+        } = siteConstructor.site;
+        const update: SiteUpdate = {
+          id,
+          goldRemaining,
+          maxMineSize,
+          siteType,
+          owner,
+          param1,
+          param2,
+        };
+        this.update(update);
+      }
     }
 
     update(update: SiteUpdate) {
+      if (typeof update.siteType === "number") {
+        switch (update.siteType) {
+          case -1:
+            this.siteType = "UNKNOWN";
+            break;
+          case 0:
+            this.siteType = "MINE";
+            break;
+          case 1:
+            this.siteType = "TOWER";
+            break;
+          case 2:
+            this.siteType = "BARRACKS";
+            break;
+          default:
+            this.siteType = "UNKNOWN";
+            break;
+        }
+      } else {
+        this.siteType = update.siteType;
+      }
       this.goldRemaining = update.goldRemaining;
       this.maxMineSize = update.maxMineSize;
-      this._structureTypeId = update.structureTypeId;
       this.owner = update.owner;
       this.param1 = update.param1;
       this.param2 = update.param2;
     }
 
-    isNotOurs = () => {
+    get isNotOurs() {
       return this.owner !== 0;
-    };
+    }
 
-    isFriendly = () => {
+    get isFriendly() {
       return this.owner === 0;
-    };
+    }
 
-    isHostile = () => {
+    get isHostile() {
       return this.owner === 1;
-    };
+    }
 
-    isUnowned = () => {
+    get isUnowned() {
       return this.owner === -1;
-    };
+    }
+
+    get isTower() {
+      return this.siteType === "TOWER";
+    }
+
+    get isBarracks() {
+      return this.siteType === "BARRACKS";
+    }
+
+    get isGoldMine() {
+      return this.siteType === "MINE";
+    }
   }
 
   type BarracksType = "KNIGHT" | "ARCHER" | "GIANT";
@@ -335,6 +385,7 @@ namespace CodeRoyale {
 
     // No idea if this is right but it kinda works.
     get isMaxedOut(): boolean {
+      console.error(`p1: ${this.param1}, p2: ${this.param2}`);
       return this.param1 >= this.param2;
     }
 
@@ -358,31 +409,31 @@ namespace CodeRoyale {
   }
 
   class QueenSenses {
-    queen: Queen;
-    unitTracker: UnitTracker;
-    siteTracker: SiteTracker;
+    private static instance: QueenSenses;
 
-    constructor(
-      queen: Queen,
-      unitTracker: UnitTracker,
-      siteTracker: SiteTracker
-    ) {
-      this.queen = queen;
-      this.unitTracker = unitTracker;
-      this.siteTracker = siteTracker;
-    }
+    private constructor() {}
+
+    static getInstance = (): QueenSenses => {
+      if (!QueenSenses.instance) {
+        QueenSenses.instance = new QueenSenses();
+      }
+      return QueenSenses.instance;
+    };
 
     nextTargetBuildingSite = (): Site | null => {
+      const siteTracker = SiteTracker.getInstance();
       // May want to extend the logic to decide whether to expand to all save sites or just stop building
-      let possibleSites = this.siteTracker.unownedSafeBuildingSites;
+      let possibleSites = siteTracker.unownedSafeBuildingSites;
       if (possibleSites.length === 0) {
-        possibleSites = this.siteTracker.allSafeBuildingSites;
+        possibleSites = siteTracker.allSafeBuildingSites;
       }
       if (possibleSites.length === 0) {
+        console.error("NO POSSIBLE BUILDING SITES - THAT SEEMS WEIRD");
         return null;
       }
 
-      let NearnessIndicator = this.queen.position.nearest(
+      const queen = Queen.getInstance();
+      let NearnessIndicator = queen.position.nearest(
         possibleSites.map((site) => site.position)
       );
 
@@ -394,7 +445,8 @@ namespace CodeRoyale {
       attackerCountThreshold: number,
       shouldScale: boolean
     ): boolean => {
-      const queenHealthFraction = this.queen.health / this.queen.maxHealth;
+      const queen = Queen.getInstance();
+      const queenHealthFraction = queen.health / queen.maxHealth;
       const scaledProximityThreshold = shouldScale
         ? proximityThreshold + 80 - queenHealthFraction * proximityThreshold
         : proximityThreshold;
@@ -406,28 +458,29 @@ namespace CodeRoyale {
       console.error(
         `scaledAttackerCountThreshold: ${scaledAttackerCountThreshold}`
       );
-      const nearbyKnights = this.unitTracker.hostileKnights.filter(
+      const unitTracker = UnitTracker.getInstance();
+      const nearbyKnights = unitTracker.hostileKnights.filter(
         (knight) =>
-          knight.position.distanceTo(this.queen.position) <
-          scaledProximityThreshold
+          knight.position.distanceTo(queen.position) < scaledProximityThreshold
       );
       return nearbyKnights.length > scaledAttackerCountThreshold;
     };
 
     awayFromKnightHorde = (proximityThreshold: number): Line => {
+      const queen = Queen.getInstance();
+      const unitTracker = UnitTracker.getInstance();
       const averagePosition = Position.average(
-        this.unitTracker.hostileKnights
+        unitTracker.hostileKnights
           .filter(
             (knight) =>
-              knight.position.distanceTo(this.queen.position) <
-              proximityThreshold
+              knight.position.distanceTo(queen.position) < proximityThreshold
           )
           .map((knight) => knight.position)
       );
       // Should vary inversely with proximityThreshold
       // Need to figure out what the range of plausible ProximityThresholds is first.
       const lineExtensionMultiplier = 4;
-      const directionTo = new Line(this.queen.position, averagePosition);
+      const directionTo = new Line(queen.position, averagePosition);
       const directionAway = directionTo.oppositeLine();
       const extendedDirectionAway = directionAway.extendedLine(
         lineExtensionMultiplier
@@ -436,60 +489,176 @@ namespace CodeRoyale {
     };
   }
 
-  // class QueenBrain {
-  //   queen: Queen;
-  //   strategy: Strategy;
+  class QueenBrain {
+    private static instance: QueenBrain;
+    private strategy: Strategy = new ExploreStrategy();
 
-  //   constructor(queen: Queen) {
-  //     this.queen = queen;
-  //     this.strategy = new ExploreStrategy();
-  //   }
+    private constructor() {}
 
-  //   think = (): void => {
-  //     this.strategy = this.strategy.nextStrategy(args);
+    static getInstance = (): QueenBrain => {
+      if (!QueenBrain.instance) {
+        QueenBrain.instance = new QueenBrain();
+      }
+      return QueenBrain.instance;
+    };
 
-  //     this.strategy.execute(state);
-  //   };
-  // }
+    think = (): void => {
+      this.strategy = this.strategy.nextStrategy();
 
-  // interface Strategy {
-  //   execute: (state: GameState) => void;
-  //   nextStrategy: (state: GameState) => Strategy;
-  // }
+      this.strategy.execute();
+    };
+  }
 
-  // class ExploreStrategy implements Strategy {
+  interface Strategy {
+    execute: () => void;
+    nextStrategy: () => Strategy;
+  }
 
-  //   constructor(private queen: Queen) {}
+  const approachNearbyBuildingSite = (): void => {
+    const site = QueenSenses.getInstance().nextTargetBuildingSite();
+    const queen = Queen.getInstance();
+    if (!site) {
+      console.error("NO SITE FOUND SO JUST STANDING STILL WTF");
+      queen.wait();
+    } else {
+      queen.move(site.position);
+    }
+  };
+  class ExploreStrategy implements Strategy {
+    constructor() {}
 
-  //   nextStrategy = (state: GameState): Strategy => {
-  //     const { queen } = this;
-  //     const { unitTracker, siteTracker } = state;
-  //     const { nextTargetBuildingSite } = queen.senses;
+    nextStrategy = (): Strategy => {
+      const queen = Queen.getInstance();
 
-  //     const targetSite = nextTargetBuildingSite();
-  //     if (targetSite) {
-  //       return new BuildStrategy(queen, targetSite);
-  //     }
+      // if the queen is touching a site that we do not own, then we should capture it
+      // Apparently which queen can build if they both try depends if the turn is even
+      // or odd so if the other queen is touching it, and it's not our turn, just move on.
+      if (
+        queen.touchedSite !== -1 &&
+        !SiteTracker.getInstance().getSite(queen.touchedSite).isFriendly
+      ) {
+        return new SiteCaptureStrategy();
+      } else {
+        return new ExploreStrategy();
+      }
+    };
 
-  //     return this;
-  //   }
-  // }
+    execute = (): void => {
+      console.error("Exploring");
+      const queen = Queen.getInstance();
+      if (queen.touchedSite !== -1) {
+        approachNearbyBuildingSite();
+      } else {
+        approachNearbyBuildingSite();
+      }
+    };
+  }
 
-  // class SiteCaptureStrategy implements Strategy {}
+  const shouldExpandTower = (site: Tower) =>
+    !!site && site.isTower && site.isFriendly && !(site as Tower).isMaxedOut;
+
+  const shouldExpandGoldMine = (site: Site) =>
+    site.isGoldMine && site.isFriendly && !(site as GoldMine).isMaxedOut;
+
+  class SiteCaptureStrategy implements Strategy {
+    nextStrategy = (): Strategy => {
+      const touchedSite = SiteTracker.getInstance().getSite(
+        Queen.getInstance().touchedSite
+      );
+
+      console.error(`shouldExpand: ${shouldExpandTower(touchedSite as Tower)}`);
+      if (
+        shouldExpandTower(
+          // touchedSite as Tower
+          new Tower({
+            constructor: {
+              id: touchedSite.id,
+              radius: touchedSite.radius,
+              x: touchedSite.position.x,
+              y: touchedSite.position.y,
+            },
+            site: touchedSite,
+          })
+        )
+      ) {
+        return new TowerExpansionStrategy();
+        // return new ExploreStrategy();
+      }
+      return new ExploreStrategy();
+    };
+
+    execute = (): void => {
+      console.error("Capturing");
+      const queen = Queen.getInstance();
+      const site = SiteTracker.getInstance().getSite(queen.touchedSite);
+      if (site.isFriendly) {
+        queen.wait();
+      } else {
+        queen.buildTower(queen.touchedSite);
+      }
+    };
+  }
+
+  class TowerExpansionStrategy implements Strategy {
+    nextStrategy = (): Strategy => {
+      const touchedSite = SiteTracker.getInstance().getSite(
+        Queen.getInstance().touchedSite
+      );
+      if (!touchedSite) {
+        return new ExploreStrategy();
+      } else if (
+        shouldExpandTower(
+          new Tower({
+            constructor: {
+              id: touchedSite.id,
+              radius: touchedSite.radius,
+              x: touchedSite.position.x,
+              y: touchedSite.position.y,
+            },
+            site: touchedSite,
+          })
+        )
+      ) {
+        return new TowerExpansionStrategy();
+      }
+      return new ExploreStrategy();
+    };
+
+    execute = (): void => {
+      console.error("Expanding");
+      const queen = Queen.getInstance();
+      const touchedSite = SiteTracker.getInstance().getSite(queen.touchedSite);
+      if (
+        shouldExpandTower(
+          new Tower({
+            constructor: {
+              id: touchedSite.id,
+              radius: touchedSite.radius,
+              x: touchedSite.position.x,
+              y: touchedSite.position.y,
+            },
+            site: touchedSite,
+          })
+        )
+      ) {
+        queen.buildTower(queen.touchedSite);
+      } else {
+        approachNearbyBuildingSite();
+      }
+    };
+  }
 
   interface QueenUpdate {
     touchedSite: number;
-    location?: Position;
+    position?: Position;
     health?: number;
   }
 
   class Queen extends Unit {
+    private static instance: Queen;
     touchedSite: number = -1;
-    // senses: QueenSenses;
-    // brain: QueenBrain;
-    // state: GameState;
 
-    constructor(
+    private constructor(
       id: number,
       owner: PlayerId,
       type: UnitType,
@@ -502,10 +671,36 @@ namespace CodeRoyale {
       this.touchedSite = touchedSite;
     }
 
+    static createInstance(
+      id: number,
+      owner: PlayerId,
+      type: UnitType,
+      health: number,
+      x: number,
+      y: number,
+      touchedSite: number
+    ) {
+      if (!Queen.instance) {
+        Queen.instance = new Queen(id, owner, type, health, x, y, touchedSite);
+      }
+      return Queen.instance;
+    }
+
+    static getInstance() {
+      if (!Queen.instance) {
+        throw new Error("Queen instance not initialized");
+      }
+      return Queen.instance;
+    }
+
+    static hasInstance() {
+      return !!Queen.instance;
+    }
+
     update(update: QueenUpdate) {
       this.touchedSite = update.touchedSite;
-      if (update.location) {
-        this.position = update.location;
+      if (update.position) {
+        this.position = update.position;
       }
       if (update.health) {
         this.health = update.health;
@@ -533,6 +728,10 @@ namespace CodeRoyale {
       console.log(`MOVE ${x} ${y}`);
     };
 
+    wait = () => {
+      console.log("WAIT");
+    };
+
     buildMine = (siteId: number) => {
       console.log(`BUILD ${siteId} MINE`);
     };
@@ -553,33 +752,40 @@ namespace CodeRoyale {
     isTouchingSite = (siteId: number) => {
       return this.touchedSite === siteId;
     };
-
-    // touchedSite: Site = () => {
-    //   return this.touchedSite;
-    // }
   }
 
   type UnitTypeNeeded = "KNIGHT" | "ARCHER" | "GIANT" | "NONE";
   class Trainer {
-    constructor() {}
+    private constructor() {}
   }
 
   class UnitTracker {
-    // I'm questioning whether this should just always be kept as an array
-    unitsById: Record<number, Unit> = {};
+    private static instance: UnitTracker;
+    private units: Unit[] = [];
 
-    constructor(units: Unit[]) {
-      units.forEach((unit) => {
-        this.unitsById[unit.id] = unit;
-      });
+    private constructor() {}
+
+    static getInstance() {
+      if (!UnitTracker.instance) {
+        UnitTracker.instance = new UnitTracker();
+      }
+      return UnitTracker.instance;
     }
 
-    get units(): Unit[] {
-      return Object.values(this.unitsById);
+    getUnit(id: number) {
+      return this.units.find((unit) => unit.id === id);
     }
 
-    getUnit<T extends Unit>(id: number) {
-      return this.unitsById[id] as T;
+    addUnit(unit: Unit) {
+      this.units.push(unit);
+    }
+
+    resetUnits() {
+      this.units = [];
+    }
+
+    get allUnits() {
+      return this.units;
     }
 
     get friendlyUnits() {
@@ -629,9 +835,17 @@ namespace CodeRoyale {
 
   type StructureType = Site | Barracks | Tower | GoldMine;
   class SiteTracker {
+    private static instance: SiteTracker;
     private sitesById: Record<number, StructureType> = {};
 
-    constructor() {}
+    private constructor() {}
+
+    static getInstance() {
+      if (!SiteTracker.instance) {
+        this.instance = new SiteTracker();
+      }
+      return SiteTracker.instance;
+    }
 
     addSite = (site: StructureType) => {
       this.sitesById[site.id] = site;
@@ -648,44 +862,38 @@ namespace CodeRoyale {
     }
 
     get friendlySites() {
-      return this.sites.filter((site) => site.isFriendly());
+      return this.sites.filter((site) => site.isFriendly);
     }
 
     get hostileSites() {
-      return this.sites.filter((site) => site.isHostile());
+      return this.sites.filter((site) => site.isHostile);
     }
 
     get unownedSites() {
-      return this.sites.filter((site) => site.isUnowned());
+      return this.sites.filter((site) => site.isUnowned);
     }
 
     get hostileTowers() {
-      return this.hostileSites.filter(
-        (site) => site.structureType === "TOWER"
-      ) as Tower[];
+      return this.hostileSites.filter((site) => site.isTower) as Tower[];
     }
 
     get friendlyKnightBarracks() {
       return this.friendlySites.filter(
         (site) =>
-          site.structureType === "BARRACKS" &&
-          (site as Barracks).barracksType === "KNIGHT"
+          site.isBarracks && (site as Barracks).barracksType === "KNIGHT"
       ) as Barracks[];
     }
 
     get friendlyArcherBarracks() {
       return this.friendlySites.filter(
         (site) =>
-          site.structureType === "BARRACKS" &&
-          (site as Barracks).barracksType === "ARCHER"
+          site.isBarracks && (site as Barracks).barracksType === "ARCHER"
       ) as Barracks[];
     }
 
     get friendlyGiantBarracks() {
       return this.friendlySites.filter(
-        (site) =>
-          site.structureType === "BARRACKS" &&
-          (site as Barracks).barracksType === "GIANT"
+        (site) => site.isBarracks && (site as Barracks).barracksType === "GIANT"
       ) as Barracks[];
     }
 
@@ -693,7 +901,9 @@ namespace CodeRoyale {
       const hostileTowers = this.hostileTowers;
       return this.unownedSites.filter((site) => {
         const isSafe = hostileTowers.every(
-          (tower) => tower.position.distanceTo(site.position) > tower.range
+          (tower) =>
+            tower.position.distanceTo(site.position) > tower.range - 100 &&
+            !site.isHostile
         );
         return isSafe;
       });
@@ -703,7 +913,16 @@ namespace CodeRoyale {
       const hostileTowers = this.hostileTowers;
       return this.sites.filter((site) => {
         const isSafe = hostileTowers.every(
-          (tower) => tower.position.distanceTo(site.position) > tower.range
+          (tower) =>
+            tower.position.distanceTo(site.position) < tower.range - 100
+          // {
+          //   if (tower.position.distanceTo(site.position) < tower.range - 100) {
+          //     return false;
+          //   }
+          //   if (site.isFriendly) {
+          //     return true;
+          //   }
+          // }
         );
         return isSafe;
       });
@@ -717,7 +936,10 @@ namespace CodeRoyale {
       });
     }
   }
+
+  // must be a singleton
   class GameState {
+    private static instance: GameState;
     gold = 0;
     shouldSave = true;
     neededBarracksType: BarracksType | "NONE" = "NONE";
@@ -725,22 +947,47 @@ namespace CodeRoyale {
     readonly targetSavings = 140;
     readonly minSavings = 20;
 
-    siteTracker: SiteTracker;
-    unitTracker: UnitTracker;
+    private constructor() {}
 
-    constructor(siteTracker: SiteTracker) {
-      this.siteTracker = siteTracker;
-      this.unitTracker = new UnitTracker([]);
-    }
+    static getInstance = () => {
+      if (!GameState.instance) {
+        GameState.instance = new GameState();
+      }
+      return GameState.instance;
+    };
+
+    createQueen = (
+      id: number,
+      owner: PlayerId,
+      type: UnitType,
+      health: number,
+      x: number,
+      y: number,
+      touchedSite: number
+    ) => {
+      Queen.createInstance(id, owner, type, health, x, y, touchedSite);
+    };
+
+    updateQueen = (
+      touchedSite: number,
+      health: number,
+      x: number,
+      y: number
+    ) => {
+      const queen = Queen.getInstance();
+      queen.update({ touchedSite, health, position: new Position(x, y) });
+    };
 
     addSite = (constructor: SiteConstructor) => {
-      this.siteTracker.addSite(new BaseSite(constructor));
+      const tracker = SiteTracker.getInstance();
+      tracker.addSite(new BaseSite(constructor));
     };
 
     updateSite = (updates: SiteUpdate) => {
-      let site = this.siteTracker.getSite(updates.id);
+      const tracker = SiteTracker.getInstance();
+      let site = tracker.getSite(updates.id);
       site.update(updates);
-      switch (updates.structureTypeId) {
+      switch (updates.siteType) {
         case -1:
           site = site as BaseSite;
           break;
@@ -756,12 +1003,11 @@ namespace CodeRoyale {
         default:
           break;
       }
-      this.siteTracker.setSite(site);
+      tracker.setSite(site);
     };
 
     resetUnits = () => {
-      // maybe belongs in UnitTracker
-      this.unitTracker.unitsById = {};
+      UnitTracker.getInstance().resetUnits();
     };
 
     addUnit = (
@@ -770,14 +1016,24 @@ namespace CodeRoyale {
       type: UnitType,
       health: number,
       x: number,
-      y: number
+      y: number,
+      touchedSite: number
     ) => {
-      this.unitTracker.;
+      if (type === -1 && owner === 0) {
+        if (Queen.hasInstance()) {
+          this.updateQueen(touchedSite, health, x, y);
+        } else {
+          this.createQueen(id, owner, type, health, x, y, touchedSite);
+        }
+      } else {
+        UnitTracker.getInstance().addUnit(
+          new Unit(id, owner, type, health, x, y)
+        );
+      }
     };
   }
 
-  const siteTracker = new SiteTracker();
-  const gameState = new GameState(siteTracker);
+  const gameState = GameState.getInstance();
   const numSites: number = parseInt(readline());
   for (let i = 0; i < numSites; i++) {
     var inputs: string[] = readline().split(" ");
@@ -785,24 +1041,42 @@ namespace CodeRoyale {
     const x: number = parseInt(inputs[1]);
     const y: number = parseInt(inputs[2]);
     const radius: number = parseInt(inputs[3]);
+    gameState.addSite({
+      constructor: {
+        id: siteId,
+        radius,
+        x,
+        y,
+      },
+    });
   }
   // game loop
   while (true) {
-    gameState.resetUnits();
     // read inputs
     var inputs: string[] = readline().split(" ");
     const gold: number = parseInt(inputs[0]);
+    gameState.gold = gold;
     const touchedSite: number = parseInt(inputs[1]); // -1 if none
     for (let i = 0; i < numSites; i++) {
       var inputs: string[] = readline().split(" ");
       const siteId: number = parseInt(inputs[0]);
       const goldRemaining: number = parseInt(inputs[1]); // -1 if unknown
       const maxMineSize: number = parseInt(inputs[2]); // -1 if unknown
-      const structureType: number = parseInt(inputs[3]); // -1 = No structure, 0 = Goldmine, 1 = Tower, 2 = Barracks
-      const owner: number = parseInt(inputs[4]); // -1 = No structure, 0 = Friendly, 1 = Enemy
+      const structureTypeId = parseInt(inputs[3]) as SiteTypeId; // -1 = No structure, 0 = Goldmine, 1 = Tower, 2 = Barracks
+      const owner = parseInt(inputs[4]) as PlayerId; // -1 = No structure, 0 = Friendly, 1 = Enemy
       const param1: number = parseInt(inputs[5]);
       const param2: number = parseInt(inputs[6]);
+      gameState.updateSite({
+        id: siteId,
+        goldRemaining,
+        maxMineSize,
+        siteType: structureTypeId,
+        owner,
+        param1,
+        param2,
+      });
     }
+    gameState.resetUnits(); // Unit info seems simple to just reset every turn
     const numUnits: number = parseInt(readline());
     for (let i = 0; i < numUnits; i++) {
       var inputs: string[] = readline().split(" ");
@@ -811,13 +1085,13 @@ namespace CodeRoyale {
       const owner = parseInt(inputs[2]) as PlayerId;
       const unitType = parseInt(inputs[3]) as UnitType; // -1 = QUEEN, 0 = KNIGHT, 1 = ARCHER, 2 = GIANT
       const health: number = parseInt(inputs[4]);
-      gameState.addUnit(i, owner, unitType, health, x, y);
+      gameState.addUnit(i, owner, unitType, health, x, y, touchedSite);
     }
     // To debug: console.error('Debug messages...'); // Write an action using console.log()
 
     // First line: A valid queen action
     // Second line: A set of training instructions
-    console.log("WAIT");
+    QueenBrain.getInstance().think();
     console.log("TRAIN");
   }
 }
