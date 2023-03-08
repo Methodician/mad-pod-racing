@@ -221,19 +221,16 @@ namespace CodeRoyale {
     id: number;
     goldRemaining: number;
     maxMineSize: number;
-    siteType: SiteTypeId | SiteType;
+    siteType: SiteTypeId;
     owner: PlayerId;
     param1: number;
     param2: number;
   }
   interface SiteConstructor {
-    constructor: {
-      id: number;
-      radius: number;
-      x: number;
-      y: number;
-    };
-    site?: Site;
+    id: number;
+    radius: number;
+    x: number;
+    y: number;
   }
   type BarracksType = "KNIGHT" | "ARCHER" | "GIANT";
 
@@ -246,63 +243,34 @@ namespace CodeRoyale {
     param1: number = -1;
     param2: number = -1;
     position: Position;
-    siteType: SiteType = "UNKNOWN";
+    private _siteType: SiteTypeId = -1;
 
     constructor(siteConstructor: SiteConstructor) {
-      const { id, radius, x, y } = siteConstructor.constructor;
+      const { id, radius, x, y } = siteConstructor;
       this.id = id;
       this.radius = radius;
       this.position = new Position(x, y);
-      if (siteConstructor.site) {
-        const {
-          id,
-          goldRemaining,
-          maxMineSize,
-          siteType,
-          owner,
-          param1,
-          param2,
-        } = siteConstructor.site;
-        const update: SiteUpdate = {
-          id,
-          goldRemaining,
-          maxMineSize,
-          siteType,
-          owner,
-          param1,
-          param2,
-        };
-        this.update(update);
-      }
     }
 
     update(update: SiteUpdate) {
-      if (typeof update.siteType === "number") {
-        switch (update.siteType) {
-          case -1:
-            this.siteType = "UNKNOWN";
-            break;
-          case 0:
-            this.siteType = "MINE";
-            break;
-          case 1:
-            this.siteType = "TOWER";
-            break;
-          case 2:
-            this.siteType = "BARRACKS";
-            break;
-          default:
-            this.siteType = "UNKNOWN";
-            break;
-        }
-      } else {
-        this.siteType = update.siteType;
-      }
+      this._siteType = update.siteType;
       this.goldRemaining = update.goldRemaining;
       this.maxMineSize = update.maxMineSize;
       this.owner = update.owner;
       this.param1 = update.param1;
       this.param2 = update.param2;
+    }
+
+    get siteType(): SiteType {
+      return this._siteType == -1
+        ? "UNKNOWN"
+        : this._siteType == 0
+        ? "MINE"
+        : this._siteType == 1
+        ? "TOWER"
+        : this._siteType == 2
+        ? "BARRACKS"
+        : "UNKNOWN";
     }
 
     get isNotOurs() {
@@ -361,6 +329,8 @@ namespace CodeRoyale {
   }
 
   class QueenSenses {
+    // Does it make sense to make this a singleton?
+    // It makes it convenient to access from anywhere, but it also makes it a bit harder to test
     private static instance: QueenSenses;
 
     private constructor() {}
@@ -374,9 +344,12 @@ namespace CodeRoyale {
 
     nextTargetBuildingSite = (): Site | null => {
       const siteTracker = SiteTracker.getInstance();
-      // May want to extend the logic to decide whether to expand to all save sites or just stop building
+      // May want to extend the logic to decide whether to expand to all safe sites or just stop building
       let possibleSites = siteTracker.unownedSafeBuildingSites;
       if (possibleSites.length === 0) {
+        console.error(
+          'No unowned safe building sites, falling back to "all safe sites"'
+        );
         possibleSites = siteTracker.allSafeBuildingSites;
       }
       if (possibleSites.length === 0) {
@@ -385,11 +358,11 @@ namespace CodeRoyale {
       }
 
       const queen = Queen.getInstance();
-      let NearnessIndicator = queen.position.nearest(
+      let nearnessIndicator = queen.position.nearest(
         possibleSites.map((site) => site.position)
       );
 
-      return possibleSites[NearnessIndicator.index];
+      return possibleSites[nearnessIndicator.index];
     };
 
     isThreatenedByKnights = (
@@ -442,6 +415,8 @@ namespace CodeRoyale {
   }
 
   class QueenBrain {
+    // Does it make sense to make this a singleton?
+    // Is it really helpful in any way?
     private static instance: QueenBrain;
     private strategy: Strategy = new ExploreStrategy();
 
@@ -564,11 +539,13 @@ namespace CodeRoyale {
 
   interface QueenUpdate {
     touchedSite: number;
-    position?: Position;
-    health?: number;
+    position: Position;
+    health: number;
   }
 
   class Queen extends Unit {
+    // Keeping this as a singleton makes it so we can't have multiple queens
+    // Enemy queen doesn't need all the same properties so maybe that's fine.
     private static instance: Queen;
     touchedSite: number = -1;
 
@@ -613,17 +590,9 @@ namespace CodeRoyale {
 
     update(update: QueenUpdate) {
       this.touchedSite = update.touchedSite;
-      if (update.position) {
-        this.position = update.position;
-      }
-      if (update.health) {
-        this.health = update.health;
-      }
+      this.position = update.position;
+      this.health = update.health;
     }
-
-    takeTurn = () => {
-      throw new Error("Method not implemented.");
-    };
 
     move = (target: Position) => {
       console.error(`Moving target: ${target.x}, ${target.y}`);
@@ -661,11 +630,13 @@ namespace CodeRoyale {
     };
 
     isTouchingAnySite = () => {
+      // So far never used...
       return this.touchedSite !== -1;
     };
 
     // may be superfluous
     isTouchingSite = (siteId: number) => {
+      // so far never used...
       return this.touchedSite === siteId;
     };
   }
@@ -936,12 +907,10 @@ namespace CodeRoyale {
     const y: number = parseInt(inputs[2]);
     const radius: number = parseInt(inputs[3]);
     gameState.addSite({
-      constructor: {
-        id: siteId,
-        radius,
-        x,
-        y,
-      },
+      id: siteId,
+      radius,
+      x,
+      y,
     });
   }
   // game loop
