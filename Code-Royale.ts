@@ -1,5 +1,6 @@
 namespace CodeRoyale {
   type NearnessIndicator = {
+    isValid: boolean;
     distance: number;
     index: number;
     position: Position;
@@ -45,6 +46,7 @@ namespace CodeRoyale {
           distance: Number.MAX_VALUE,
           index: 0,
           position: positions[0],
+          isValid: positions.length > 0,
         } as NearnessIndicator
       );
     }
@@ -114,19 +116,21 @@ namespace CodeRoyale {
   }
 
   type PlayerId = -1 | 0 | 1;
-  type UnitType = -1 | 0 | 1 | 2;
+  type UnitTypeId = -1 | 0 | 1 | 2;
+  type UnitType = "QUEEN" | "KNIGHT" | "ARCHER" | "GIANT" | "UNKNOWN";
+
   // type UnitRadius = 30 | 20 | 25 | 40;
   // type UnitSpeed = 60 | 100 | 75 | 50;
   class Unit {
     id: number;
     ownerId: PlayerId;
-    type: UnitType;
+    _unitTypeId: UnitTypeId;
     health: number;
     position: Position;
 
     // -1 = QUEEN, 0 = KNIGHT, 1 = ARCHER, 2 = GIANT
-    get unitType(): string {
-      switch (this.type) {
+    get unitType(): UnitType {
+      switch (this._unitTypeId) {
         case -1:
           return "QUEEN";
         case 0:
@@ -143,7 +147,7 @@ namespace CodeRoyale {
     // -1 = QUEEN, 0 = KNIGHT, 1 = ARCHER, 2 = GIANT
     // QUEEN = 30, KNIGHT = 20, ARCHER = 25, GIANT = 40
     get radius(): number {
-      switch (this.type) {
+      switch (this._unitTypeId) {
         case -1:
           return 30;
         case 0:
@@ -160,7 +164,7 @@ namespace CodeRoyale {
     // -1 = QUEEN, 0 = KNIGHT, 1 = ARCHER, 2 = GIANT
     // QUEEN = 60, KNIGHT = 100, ARCHER = 75, GIANT = 50
     get speed(): number {
-      switch (this.type) {
+      switch (this._unitTypeId) {
         case -1:
           return 60;
         case 0:
@@ -177,7 +181,7 @@ namespace CodeRoyale {
     // -1 = QUEEN, 0 = KNIGHT, 1 = ARCHER, 2 = GIANT
     // QUEEN = 200, KNIGHT = 25, ARCHER = 45, GIANT = 200
     get maxHealth(): number {
-      switch (this.type) {
+      switch (this._unitTypeId) {
         case -1:
           return 200;
         case 0:
@@ -202,14 +206,14 @@ namespace CodeRoyale {
     constructor(
       id: number,
       owner: PlayerId,
-      type: UnitType,
+      type: UnitTypeId,
       health: number,
       x: number,
       y: number
     ) {
       this.id = id;
       this.ownerId = owner;
-      this.type = type;
+      this._unitTypeId = type;
       this.health = health;
       this.position = new Position(x, y);
     }
@@ -333,8 +337,6 @@ namespace CodeRoyale {
     // It makes it convenient to access from anywhere, but it also makes it a bit harder to test
     private static instance: QueenSenses;
 
-    private constructor() {}
-
     static getInstance = (): QueenSenses => {
       if (!QueenSenses.instance) {
         QueenSenses.instance = new QueenSenses();
@@ -358,10 +360,12 @@ namespace CodeRoyale {
       }
 
       const queen = Queen.getInstance();
-      let nearnessIndicator = queen.position.nearest(
+      const nearnessIndicator = queen.position.nearest(
         possibleSites.map((site) => site.position)
       );
-
+      if (!nearnessIndicator.isValid) {
+        console.error("nearnessIndicator is NOT VALID");
+      }
       return possibleSites[nearnessIndicator.index];
     };
 
@@ -420,8 +424,6 @@ namespace CodeRoyale {
     private static instance: QueenBrain;
     private strategy: Strategy = new ExploreStrategy();
 
-    private constructor() {}
-
     static getInstance = (): QueenBrain => {
       if (!QueenBrain.instance) {
         QueenBrain.instance = new QueenBrain();
@@ -452,9 +454,8 @@ namespace CodeRoyale {
       queen.move(site.position);
     }
   };
-  class ExploreStrategy implements Strategy {
-    constructor() {}
 
+  class ExploreStrategy implements Strategy {
     nextStrategy = (): Strategy => {
       const queen = Queen.getInstance();
 
@@ -486,7 +487,11 @@ namespace CodeRoyale {
     !!site && site.isTower && site.isFriendly && !site.towerSpecs.isMaxedOut;
 
   const shouldExpandGoldMine = (site: Site) =>
-    site.isGoldMine && site.isFriendly && site.goldMineSpecs.isMaxedOut;
+    !!site &&
+    site.isGoldMine &&
+    site.isFriendly &&
+    site.goldRemaining > 80 &&
+    !site.goldMineSpecs.isMaxedOut;
 
   class SiteCaptureStrategy implements Strategy {
     nextStrategy = (): Strategy => {
@@ -496,19 +501,108 @@ namespace CodeRoyale {
 
       if (shouldExpandTower(touchedSite)) {
         return new TowerExpansionStrategy();
+      } else if (shouldExpandGoldMine(touchedSite)) {
+        return new GoldMineExpansionStrategy();
+      } else {
+        return new ExploreStrategy();
       }
-      return new ExploreStrategy();
     };
 
     execute = (): void => {
       console.error("Capturing");
       const queen = Queen.getInstance();
       const site = SiteTracker.getInstance().getSite(queen.touchedSite);
+      // testing
+      const enemyQueen = UnitTracker.getInstance().enemyQueen;
+      console.error(enemyQueen?.id);
+      if (enemyQueen) {
+        // log distance from the site to enemy queen
+        console.error(
+          `Distance from site to enemy queen: ${site.position.distanceTo(
+            enemyQueen.position
+          )}`
+        );
+      }
+      // end testing
       if (site.isFriendly) {
+        console.error("Site is already friendly, just standing still");
         queen.wait();
       } else {
-        queen.buildTower(queen.touchedSite);
+        const capPref = this.siteCapturePreference();
+        switch (capPref) {
+          case "KNIGHT_BARRACKS":
+            queen.buildBarracks(site.id, "KNIGHT");
+            break;
+          case "ARCHER_BARRACKS":
+            queen.buildBarracks(site.id, "ARCHER");
+            break;
+          case "GIANT_BARRACKS":
+            queen.buildBarracks(site.id, "GIANT");
+            break;
+          case "GOLD_MINE":
+            queen.buildGoldMine(site.id);
+            break;
+          case "TOWER":
+            queen.buildTower(site.id);
+            break;
+          default:
+            queen.wait();
+        }
       }
+    };
+
+    private siteCapturePreference = (): SiteBuildType => {
+      const trainer = Trainer.getInstance();
+      const tracker = SiteTracker.getInstance();
+      const enemyQueen = UnitTracker.getInstance().enemyQueen;
+      const site = tracker.getSite(Queen.getInstance().touchedSite);
+      const distanceFromSiteToEnemyQueen = enemyQueen
+        ? site.position.distanceTo(enemyQueen.position)
+        : Number.MAX_VALUE;
+
+      console.error(`trainer.unitTypeNeeded: ${trainer.unitTypeNeeded}`);
+      // Should consider max mine size before just building anything else
+      if (
+        (trainer.unitTypeNeeded === "KNIGHT" &&
+          tracker.friendlyKnightBarracks.length < 1) ||
+        distanceFromSiteToEnemyQueen < 390
+      ) {
+        // Consider adding more barracks close to enemy queen if the site is not awesome for gold etc
+        return "KNIGHT_BARRACKS";
+      } else if (
+        trainer.unitTypeNeeded === "ARCHER" &&
+        tracker.friendlyArcherBarracks.length < 1
+      ) {
+        return "ARCHER_BARRACKS";
+      } else if (
+        trainer.unitTypeNeeded === "GIANT" &&
+        tracker.friendlyGiantBarracks.length < 1
+      ) {
+        return "GIANT_BARRACKS";
+      } else if (this.shouldBuildGoldMine()) {
+        return "GOLD_MINE";
+      } else return "TOWER";
+    };
+
+    private shouldBuildGoldMine = (): boolean => {
+      const touchedSite = SiteTracker.getInstance().getSite(
+        Queen.getInstance().touchedSite
+      );
+      const hasEnoughGold = touchedSite.goldRemaining >= 80; // could be prop of site?
+      if (!hasEnoughGold) {
+        return false;
+      }
+
+      const nearestKnightIndicator = touchedSite.position.nearest(
+        UnitTracker.getInstance().hostileKnightPositions
+      );
+      if (!nearestKnightIndicator.isValid) {
+        console.error("nearestKnightIndicator is NOT VALID");
+      }
+      if (nearestKnightIndicator.distance < 400) {
+        return false;
+      }
+      return true;
     };
   }
 
@@ -521,16 +615,43 @@ namespace CodeRoyale {
         return new ExploreStrategy();
       } else if (shouldExpandTower(touchedSite)) {
         return new TowerExpansionStrategy();
+      } else {
+        return new ExploreStrategy();
       }
-      return new ExploreStrategy();
     };
 
     execute = (): void => {
-      console.error("Expanding");
+      console.error("Expanding TOWER");
       const queen = Queen.getInstance();
       const touchedSite = SiteTracker.getInstance().getSite(queen.touchedSite);
       if (shouldExpandTower(touchedSite)) {
         queen.buildTower(queen.touchedSite);
+      } else {
+        approachNearbyBuildingSite();
+      }
+    };
+  }
+
+  class GoldMineExpansionStrategy implements Strategy {
+    nextStrategy = (): Strategy => {
+      const touchedSite = SiteTracker.getInstance().getSite(
+        Queen.getInstance().touchedSite
+      );
+      if (!touchedSite) {
+        return new ExploreStrategy();
+      } else if (shouldExpandGoldMine(touchedSite)) {
+        return new GoldMineExpansionStrategy();
+      } else {
+        return new ExploreStrategy();
+      }
+    };
+
+    execute = (): void => {
+      console.error("Expanding GOLD MINE");
+      const queen = Queen.getInstance();
+      const touchedSite = SiteTracker.getInstance().getSite(queen.touchedSite);
+      if (shouldExpandGoldMine(touchedSite)) {
+        queen.buildGoldMine(queen.touchedSite);
       } else {
         approachNearbyBuildingSite();
       }
@@ -543,6 +664,15 @@ namespace CodeRoyale {
     health: number;
   }
 
+  // Consider merging with SiteType
+  // and maybe merging siteType getter with barracksSpecks type
+  type SiteBuildType =
+    | "TOWER"
+    | "GOLD_MINE"
+    | "KNIGHT_BARRACKS"
+    | "ARCHER_BARRACKS"
+    | "GIANT_BARRACKS";
+
   class Queen extends Unit {
     // Keeping this as a singleton makes it so we can't have multiple queens
     // Enemy queen doesn't need all the same properties so maybe that's fine.
@@ -552,7 +682,7 @@ namespace CodeRoyale {
     private constructor(
       id: number,
       owner: PlayerId,
-      type: UnitType,
+      type: UnitTypeId,
       health: number,
       x: number,
       y: number,
@@ -565,7 +695,7 @@ namespace CodeRoyale {
     static createInstance(
       id: number,
       owner: PlayerId,
-      type: UnitType,
+      type: UnitTypeId,
       health: number,
       x: number,
       y: number,
@@ -617,7 +747,7 @@ namespace CodeRoyale {
       console.log("WAIT");
     };
 
-    buildMine = (siteId: number) => {
+    buildGoldMine = (siteId: number) => {
       console.log(`BUILD ${siteId} MINE`);
     };
 
@@ -643,16 +773,233 @@ namespace CodeRoyale {
 
   type UnitTypeNeeded = "KNIGHT" | "ARCHER" | "GIANT" | "NONE";
   class Trainer {
-    private constructor() {
-      throw new Error("Trainer is not implemented");
+    unitTypeNeeded: UnitTypeNeeded = "NONE";
+    // For now a singleton but I'm wondering if this shouldn't be a
+    // property of the Queen, supplemental to the QueenBrain
+    private static instance: Trainer;
+
+    static getInstance() {
+      if (!Trainer.instance) {
+        Trainer.instance = new Trainer();
+      }
+      return Trainer.instance;
     }
+
+    public train = (): void => {
+      const unitTypeNeeded = this.getUnitTypeNeeded();
+      console.error(`Unit type needed: ${unitTypeNeeded}`);
+      if (unitTypeNeeded !== "NONE") {
+        switch (unitTypeNeeded) {
+          case "KNIGHT":
+            this.trainKnights();
+            break;
+          case "ARCHER":
+            this.trainArchers();
+            break;
+          case "GIANT":
+            this.trainGiants();
+            break;
+          default:
+            this.trainNothing();
+        }
+      } else {
+        // nothing to do here...
+        this.trainNothing();
+      }
+      this.unitTypeNeeded = unitTypeNeeded;
+    };
+
+    private trainKnights = (): void => {
+      const siteTracker = SiteTracker.getInstance();
+      const knightBarracks = siteTracker.friendlyKnightBarracks;
+      const knightBarracksPositions =
+        siteTracker.friendlyKnightBarracksPositions;
+      // if there are no knight barracks then just chill.
+      if (knightBarracks.length === 0) {
+        console.error("Knights wanted but no barracks found.");
+        this.trainNothing();
+      } else {
+        // find the knight barracks closest to the enemy queen
+        const enemyQueen = UnitTracker.getInstance().enemyQueen;
+        if (!enemyQueen) {
+          throw new Error("Enemy queen not found");
+        }
+        // Should consider strategies to build barracks in different locations
+        // Ideal to train knights closer to enemy queen
+        // If a location has little gold or small max mine rate and we want lots of knights, then...
+        const nearestBarracksIndicator = enemyQueen.position.nearest(
+          knightBarracksPositions
+        );
+        if (!nearestBarracksIndicator.isValid) {
+          console.error("nearestBarracksIndicator NOT VALID");
+        }
+        const nearestBarracks = knightBarracks[nearestBarracksIndicator.index]; // does this work?
+        // likely to deprecate this:
+        const closestBarracks = knightBarracks.reduce((closest, barracks) => {
+          const proximity = enemyQueen.position.distanceTo(barracks.position);
+          if (proximity < closest.position.distanceTo(enemyQueen.position)) {
+            return barracks;
+          } else {
+            return closest;
+          }
+        }, knightBarracks[0]);
+        // just checking for now:
+        console.error(`closest barracks: ${closestBarracks.id}`);
+        console.error(`nearest barracks: ${nearestBarracks.id}`);
+        console.log(`TRAIN ${nearestBarracks.id}`);
+      }
+    };
+
+    private trainArchers = (): void => {
+      const siteTracker = SiteTracker.getInstance();
+      const archerBarracks = siteTracker.friendlyArcherBarracks;
+      // if there are no archer barracks then just chill.
+      if (archerBarracks.length === 0) {
+        console.error("Archers wanted but no barracks found.");
+        this.trainNothing();
+      } else {
+        // find the archer barracks closest to enemy knight barracks
+        const enemyKnightBarracks = siteTracker.hostileKnightBarracks;
+        const queenLocation = Queen.getInstance().position;
+        if (enemyKnightBarracks.length === 0) {
+          // just train closest to queen
+          const closestBarracksIndicator = queenLocation.nearest(
+            archerBarracks.map((b) => b.position)
+          );
+          if (!closestBarracksIndicator.isValid) {
+            console.error("closestBarracksIndicator NOT VALID");
+          }
+          const closestBarracks =
+            archerBarracks[closestBarracksIndicator.index];
+          console.log(`TRAIN ${closestBarracks.id}`);
+        } else {
+          const knightBarracksClosestToQueen = enemyKnightBarracks.reduce(
+            (closest, barracks) => {
+              const proximity = queenLocation.distanceTo(barracks.position);
+              if (proximity < closest.position.distanceTo(queenLocation)) {
+                return barracks;
+              } else {
+                return closest;
+              }
+            },
+            enemyKnightBarracks[0]
+          );
+          const archerBarracksClosestToKnightBarracks = archerBarracks.reduce(
+            (closest, barracks) => {
+              const proximity =
+                knightBarracksClosestToQueen.position.distanceTo(
+                  barracks.position
+                );
+              if (
+                proximity <
+                closest.position.distanceTo(
+                  knightBarracksClosestToQueen.position
+                )
+              ) {
+                return barracks;
+              } else {
+                return closest;
+              }
+            },
+            archerBarracks[0]
+          );
+          console.log(`TRAIN ${archerBarracksClosestToKnightBarracks.id}`);
+        }
+      }
+    };
+
+    private trainGiants = (): void => {
+      // train giants at the closest barracks to the enemy tower closest to my queen
+      const giantBarracks = SiteTracker.getInstance().friendlyGiantBarracks;
+      // if there are no giant barracks then just chill.
+      if (giantBarracks.length === 0) {
+        console.error("Giants wanted but no barracks found.");
+        this.trainNothing();
+      } else {
+        const enemyTowers = SiteTracker.getInstance().hostileTowers;
+        const queenLocation = Queen.getInstance().position;
+        const enemyTowerClosestToQueen = enemyTowers.reduce(
+          (closest, tower) => {
+            const proximity = queenLocation.distanceTo(tower.position);
+            if (proximity < closest.position.distanceTo(queenLocation)) {
+              return tower;
+            } else {
+              return closest;
+            }
+          },
+          enemyTowers[0]
+        );
+        const giantBarracksClosestToEnemyTower = giantBarracks.reduce(
+          (closest, barracks) => {
+            const proximity = enemyTowerClosestToQueen.position.distanceTo(
+              barracks.position
+            );
+            if (
+              proximity <
+              closest.position.distanceTo(enemyTowerClosestToQueen.position)
+            ) {
+              return barracks;
+            } else {
+              return closest;
+            }
+          },
+          giantBarracks[0]
+        );
+        console.log(`TRAIN ${giantBarracksClosestToEnemyTower.id}`);
+      }
+    };
+
+    private trainNothing = (): void => {
+      console.log("TRAIN");
+    };
+
+    private getUnitTypeNeeded = (): UnitTypeNeeded => {
+      const unitTracker = UnitTracker.getInstance();
+      const siteTracker = SiteTracker.getInstance();
+      const gameState = GameState.getInstance();
+      const enemyQueen = unitTracker.enemyQueen;
+      const queenFriendlyKnightBarracksNearnessIndicator =
+        enemyQueen.position.nearest(
+          siteTracker.friendlyKnightBarracks.map(
+            (barracks) => barracks.position
+          )
+        );
+      if (!queenFriendlyKnightBarracksNearnessIndicator.isValid) {
+        console.error("queenFriendlyKnightBarracksNearnessIndicator NOT VALID");
+      }
+      // if I have a barracks less than 400 units away from queen just train knights
+      if (queenFriendlyKnightBarracksNearnessIndicator.distance < 400) {
+        return "KNIGHT";
+        // if they have more than 3 towers and I don't have enough giants
+      } else if (
+        siteTracker.hostileTowers.length > 3 &&
+        unitTracker.friendlyGiants.length < 3
+      ) {
+        return "GIANT";
+        // if they have a knight barracks and I don't have enough archers
+      } else if (
+        siteTracker.hostileKnightBarracks.length > 0 &&
+        unitTracker.friendlyArchers.length < 1
+      ) {
+        return "ARCHER";
+        // if they just have a lot of knights and I don't have enough archers
+      } else if (
+        unitTracker.hostileKnights.length > 8 &&
+        unitTracker.friendlyArchers.length < 6
+      ) {
+        return "ARCHER";
+        // if I don't need to save any money and don't have other necessities...
+      } else if (!gameState.shouldSave) {
+        return "KNIGHT";
+      } else {
+        return "NONE";
+      }
+    };
   }
 
   class UnitTracker {
     private static instance: UnitTracker;
     private units: Unit[] = [];
-
-    private constructor() {}
 
     static getInstance() {
       if (!UnitTracker.instance) {
@@ -689,6 +1036,10 @@ namespace CodeRoyale {
       return this.hostileUnits.filter((unit) => unit.unitType === "KNIGHT");
     }
 
+    get hostileKnightPositions() {
+      return this.hostileKnights.map((knight) => knight.position);
+    }
+
     get friendlyKnights() {
       return this.friendlyUnits.filter((unit) => unit.unitType === "KNIGHT");
     }
@@ -709,6 +1060,14 @@ namespace CodeRoyale {
       return this.friendlyUnits.filter((unit) => unit.unitType === "GIANT");
     }
 
+    get enemyQueen(): Unit {
+      const queen = this.hostileUnits.find((unit) => unit.unitType === "QUEEN");
+      if (!queen) {
+        throw new Error("No enemy queen found.");
+      }
+      return queen;
+    }
+
     getUnitsByProximity(target: Position) {
       return this.units.sort((a, b) => {
         return a.position.distanceTo(target) - b.position.distanceTo(target);
@@ -725,8 +1084,6 @@ namespace CodeRoyale {
   class SiteTracker {
     private static instance: SiteTracker;
     private sitesById: Record<number, Site> = {};
-
-    private constructor() {}
 
     static getInstance() {
       if (!SiteTracker.instance) {
@@ -773,14 +1130,36 @@ namespace CodeRoyale {
       );
     }
 
+    get friendlyKnightBarracksPositions() {
+      return this.friendlyKnightBarracks.map((barracks) => barracks.position);
+    }
+
+    get hostileKnightBarracks() {
+      return this.hostileSites.filter(
+        (site) => site.isBarracks && site.barracksSpecs.type === "KNIGHT"
+      );
+    }
+
     get friendlyArcherBarracks() {
       return this.friendlySites.filter(
         (site) => site.isBarracks && site.barracksSpecs.type === "ARCHER"
       );
     }
 
+    get hostileArcherBarracks() {
+      return this.hostileSites.filter(
+        (site) => site.isBarracks && site.barracksSpecs.type === "ARCHER"
+      );
+    }
+
     get friendlyGiantBarracks() {
       return this.friendlySites.filter(
+        (site) => site.isBarracks && site.barracksSpecs.type === "GIANT"
+      );
+    }
+
+    get hostileGiantBarracks() {
+      return this.hostileSites.filter(
         (site) => site.isBarracks && site.barracksSpecs.type === "GIANT"
       );
     }
@@ -821,14 +1200,12 @@ namespace CodeRoyale {
   // must be a singleton
   class GameState {
     private static instance: GameState;
-    gold = 0;
+    private gold = 0;
     shouldSave = true;
     neededBarracksType: BarracksType | "NONE" = "NONE";
 
     readonly targetSavings = 140;
     readonly minSavings = 20;
-
-    private constructor() {}
 
     static getInstance = () => {
       if (!GameState.instance) {
@@ -837,10 +1214,19 @@ namespace CodeRoyale {
       return GameState.instance;
     };
 
+    updateGold = (gold: number) => {
+      this.gold = gold;
+      if (this.gold > this.targetSavings) {
+        this.shouldSave = false;
+      } else if (this.gold < this.minSavings) {
+        this.shouldSave = true;
+      }
+    };
+
     createQueen = (
       id: number,
       owner: PlayerId,
-      type: UnitType,
+      type: UnitTypeId,
       health: number,
       x: number,
       y: number,
@@ -878,7 +1264,7 @@ namespace CodeRoyale {
     addUnit = (
       id: number,
       owner: PlayerId,
-      type: UnitType,
+      type: UnitTypeId,
       health: number,
       x: number,
       y: number,
@@ -918,7 +1304,7 @@ namespace CodeRoyale {
     // read inputs
     var inputs: string[] = readline().split(" ");
     const gold: number = parseInt(inputs[0]);
-    gameState.gold = gold;
+    gameState.updateGold(gold);
     const touchedSite: number = parseInt(inputs[1]); // -1 if none
     for (let i = 0; i < numSites; i++) {
       var inputs: string[] = readline().split(" ");
@@ -946,7 +1332,7 @@ namespace CodeRoyale {
       const x: number = parseInt(inputs[0]);
       const y: number = parseInt(inputs[1]);
       const owner = parseInt(inputs[2]) as PlayerId;
-      const unitType = parseInt(inputs[3]) as UnitType; // -1 = QUEEN, 0 = KNIGHT, 1 = ARCHER, 2 = GIANT
+      const unitType = parseInt(inputs[3]) as UnitTypeId; // -1 = QUEEN, 0 = KNIGHT, 1 = ARCHER, 2 = GIANT
       const health: number = parseInt(inputs[4]);
       gameState.addUnit(i, owner, unitType, health, x, y, touchedSite);
     }
@@ -955,6 +1341,6 @@ namespace CodeRoyale {
     // First line: A valid queen action
     // Second line: A set of training instructions
     QueenBrain.getInstance().think();
-    console.log("TRAIN");
+    Trainer.getInstance().train();
   }
 }
