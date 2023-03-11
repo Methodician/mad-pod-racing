@@ -676,17 +676,6 @@ namespace CodeRoyale {
       console.error("Capturing");
       const queen = Queen.getInstance();
       const site = SiteTracker.getInstance().getSite(queen.touchedSiteId);
-      // testing
-      const enemyQueen = UnitTracker.getInstance().enemyQueen;
-      if (enemyQueen) {
-        // log distance from the site to enemy queen
-        console.error(
-          `Distance from site to enemy queen: ${site.position.distanceTo(
-            enemyQueen.position
-          )}`
-        );
-      }
-      // end testing
       if (site.isFriendly) {
         console.error("Site is already friendly, moving on");
         queen.approachNearbyBuildingSite();
@@ -728,7 +717,10 @@ namespace CodeRoyale {
       if (
         (trainer.unitTypeNeeded === "KNIGHT" &&
           tracker.friendlyKnightBarracks.length < 1) ||
-        distanceFromSiteToEnemyQueen < 390
+        (distanceFromSiteToEnemyQueen < 390 &&
+          enemyQueen.position.nearest(
+            tracker.friendlyKnightBarracks.map((barracks) => barracks.position)
+          ).distance > 422)
       ) {
         // Consider adding more barracks close to enemy queen if the site is not awesome for gold etc
         return "KNIGHT_BARRACKS";
