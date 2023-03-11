@@ -64,10 +64,10 @@ namespace CodeRoyale {
     x2: number;
     y2: number;
 
-    get origin(): Position {
+    get start(): Position {
       return new Position(this.x1, this.y1);
     }
-    get destination(): Position {
+    get end(): Position {
       return new Position(this.x2, this.y2);
     }
 
@@ -118,9 +118,6 @@ namespace CodeRoyale {
   type PlayerId = -1 | 0 | 1;
   type UnitTypeId = -1 | 0 | 1 | 2;
   type UnitType = "QUEEN" | "KNIGHT" | "ARCHER" | "GIANT" | "UNKNOWN";
-
-  // type UnitRadius = 30 | 20 | 25 | 40;
-  // type UnitSpeed = 60 | 100 | 75 | 50;
   class Unit {
     id: number;
     ownerId: PlayerId;
@@ -144,7 +141,6 @@ namespace CodeRoyale {
       }
     }
 
-    // -1 = QUEEN, 0 = KNIGHT, 1 = ARCHER, 2 = GIANT
     // QUEEN = 30, KNIGHT = 20, ARCHER = 25, GIANT = 40
     get radius(): number {
       switch (this._unitTypeId) {
@@ -161,7 +157,8 @@ namespace CodeRoyale {
       }
     }
 
-    // -1 = QUEEN, 0 = KNIGHT, 1 = ARCHER, 2 = GIANT
+    // Could use these to approximate how many turns before a unit reaches target
+    // Even a moving target: e.g. approximate how long until a knight reaches my queen if she flees
     // QUEEN = 60, KNIGHT = 100, ARCHER = 75, GIANT = 50
     get speed(): number {
       switch (this._unitTypeId) {
@@ -178,8 +175,7 @@ namespace CodeRoyale {
       }
     }
 
-    // -1 = QUEEN, 0 = KNIGHT, 1 = ARCHER, 2 = GIANT
-    // QUEEN = 200, KNIGHT = 25, ARCHER = 45, GIANT = 200
+    // QUEEN = 100, KNIGHT = 25, ARCHER = 45, GIANT = 200
     get maxHealth(): number {
       switch (this._unitTypeId) {
         case -1:
@@ -369,41 +365,91 @@ namespace CodeRoyale {
       return possibleSites[nearnessIndicator.index];
     };
 
+    private scaledProximityThreshold = (
+      queenHealth: number,
+      proximityMax: number,
+      proximityMin: number,
+      exponent = 1.8
+    ): number => {
+      if (proximityMax < proximityMin) {
+        throw new Error(
+          "proximityMax must be greater than or equal to proximityMin"
+        );
+      }
+      if (proximityMin < 0) {
+        throw new Error("proximityMin must be greater than or equal to 0");
+      }
+      const queenHealthFraction = queenHealth / 100;
+      // https://www.wolframalpha.com/input?i=plot+1000+-+800%28x%5E1.8%29+from+0+to+1
+      // proximityMax - (proximityMax - proximityMin) * queenHealthFraction^exponent
+      return (
+        proximityMax -
+        (proximityMax - proximityMin) * Math.pow(queenHealthFraction, exponent)
+      );
+    };
+
+    private scaledAttackerCountThreshold = (
+      queenHealth: number,
+      attackerCountMax: number,
+      attackerCountMin: number,
+      exponent = 1.8
+    ): number => {
+      if (attackerCountMax < attackerCountMin) {
+        throw new Error(
+          "attackerCountMax must be greater than or equal to attackerCountMin"
+        );
+      }
+      if (attackerCountMin < 1) {
+        throw new Error("attackerCountMin must be greater than or equal to 1");
+      }
+      const queenHealthFraction = queenHealth / 100;
+      // https://www.wolframalpha.com/input?i=plot+10%28x%5E1.8%29+%2B+0+from+0+to+1
+      // (attackerCountMax - attackerCountMin) * queenHealthFraction^exponent +_attackerCountMin
+      return (
+        (attackerCountMax - attackerCountMin) *
+          Math.pow(queenHealthFraction, exponent) +
+        attackerCountMin
+      );
+    };
+
     isThreatenedByKnights = (
-      proximityThreshold: number,
-      attackerCountThreshold: number,
-      shouldScale: boolean
+      proximityThresholdMin: number,
+      proximityThresholdMax: number,
+      attackerCountThresholdMin: number,
+      attackerCountThresholdMax: number
     ): boolean => {
       const queen = Queen.getInstance();
-      const queenHealthFraction = queen.health / queen.maxHealth;
-      const scaledProximityThreshold = shouldScale
-        ? proximityThreshold + 80 - queenHealthFraction * proximityThreshold
-        : proximityThreshold;
-      const scaledAttackerCountThreshold = shouldScale
-        ? queenHealthFraction * attackerCountThreshold
-        : attackerCountThreshold;
-      console.error(`queenHealthFraction: ${queenHealthFraction}`);
-      console.error(`scaledProximityThreshold: ${scaledProximityThreshold}`);
-      console.error(
-        `scaledAttackerCountThreshold: ${scaledAttackerCountThreshold}`
+      const proximityThreshold = this.scaledProximityThreshold(
+        queen.health,
+        proximityThresholdMax,
+        proximityThresholdMin
       );
+      const attackerCountThreshold = this.scaledAttackerCountThreshold(
+        queen.health,
+        attackerCountThresholdMax,
+        attackerCountThresholdMin
+      );
+
       const unitTracker = UnitTracker.getInstance();
       const nearbyKnights = unitTracker.hostileKnights.filter(
         (knight) =>
-          knight.position.distanceTo(queen.position) < scaledProximityThreshold
+          knight.position.distanceTo(queen.position) < proximityThreshold
       );
-      return nearbyKnights.length > scaledAttackerCountThreshold;
+      return nearbyKnights.length > attackerCountThreshold;
     };
 
-    awayFromKnightHorde = (proximityThreshold: number): Line => {
+    awayFromKnightHorde = (): Line => {
+      // awayFromKnightHorde = (proximityThreshold: number): Line => {
+      // This was causing issues when no knights were in range.
+      // Not hard to over come...
       const queen = Queen.getInstance();
       const unitTracker = UnitTracker.getInstance();
       const averagePosition = Position.average(
         unitTracker.hostileKnights
-          .filter(
-            (knight) =>
-              knight.position.distanceTo(queen.position) < proximityThreshold
-          )
+          // .filter(
+          //   (knight) =>
+          //     knight.position.distanceTo(queen.position) < proximityThreshold
+          // )
           .map((knight) => knight.position)
       );
       // Should vary inversely with proximityThreshold
@@ -455,6 +501,21 @@ namespace CodeRoyale {
     }
   };
 
+  // May refine further
+  // For example, should not flee if I'm getting cornered
+  const shouldFlee = (
+    proximityThresholdMin: number,
+    proximityThresholdMax: number,
+    attackerCountThresholdMin: number,
+    attackerCountThresholdMax: number
+  ) =>
+    QueenSenses.getInstance().isThreatenedByKnights(
+      proximityThresholdMin,
+      proximityThresholdMax,
+      attackerCountThresholdMin,
+      attackerCountThresholdMax
+    );
+
   class ExploreStrategy implements Strategy {
     nextStrategy = (): Strategy => {
       const queen = Queen.getInstance();
@@ -462,9 +523,11 @@ namespace CodeRoyale {
       // if the queen is touching a site that we do not own, then we should capture it
       // Apparently which queen can build if they both try depends if the turn is even
       // or odd so if the other queen is touching it, and it's not our turn, just move on.
-      if (
-        queen.touchedSite !== -1 &&
-        !SiteTracker.getInstance().getSite(queen.touchedSite).isFriendly
+      if (shouldFlee(200, 1200, 2, 15)) {
+        return new FleeStrategy();
+      } else if (
+        queen.touchedSiteId !== -1 &&
+        !SiteTracker.getInstance().getSite(queen.touchedSiteId).isFriendly
       ) {
         return new SiteCaptureStrategy();
       } else {
@@ -475,10 +538,34 @@ namespace CodeRoyale {
     execute = (): void => {
       console.error("Exploring");
       const queen = Queen.getInstance();
-      if (queen.touchedSite !== -1) {
+      if (queen.touchedSiteId !== -1) {
         approachNearbyBuildingSite();
       } else {
         approachNearbyBuildingSite();
+      }
+    };
+  }
+
+  class FleeStrategy implements Strategy {
+    nextStrategy = (): Strategy => {
+      if (shouldFlee(300, 1100, 2, 13)) {
+        return new FleeStrategy();
+      } else {
+        return new ExploreStrategy();
+      }
+    };
+
+    execute = (): void => {
+      console.error("Fleeing");
+      const queen = Queen.getInstance();
+      const line = QueenSenses.getInstance().awayFromKnightHorde();
+      if (
+        queen.isTouchingAnySite() &&
+        !SiteTracker.getInstance().getSite(queen.touchedSiteId).isTower
+      ) {
+        queen.buildTower(queen.touchedSiteId);
+      } else {
+        queen.move(line.end);
       }
     };
   }
@@ -496,10 +583,12 @@ namespace CodeRoyale {
   class SiteCaptureStrategy implements Strategy {
     nextStrategy = (): Strategy => {
       const touchedSite = SiteTracker.getInstance().getSite(
-        Queen.getInstance().touchedSite
+        Queen.getInstance().touchedSiteId
       );
 
-      if (shouldExpandTower(touchedSite)) {
+      if (shouldFlee(450, 2200, 4, 20)) {
+        return new FleeStrategy();
+      } else if (shouldExpandTower(touchedSite)) {
         return new TowerExpansionStrategy();
       } else if (shouldExpandGoldMine(touchedSite)) {
         return new GoldMineExpansionStrategy();
@@ -511,7 +600,7 @@ namespace CodeRoyale {
     execute = (): void => {
       console.error("Capturing");
       const queen = Queen.getInstance();
-      const site = SiteTracker.getInstance().getSite(queen.touchedSite);
+      const site = SiteTracker.getInstance().getSite(queen.touchedSiteId);
       // testing
       const enemyQueen = UnitTracker.getInstance().enemyQueen;
       console.error(enemyQueen?.id);
@@ -555,7 +644,7 @@ namespace CodeRoyale {
       const trainer = Trainer.getInstance();
       const tracker = SiteTracker.getInstance();
       const enemyQueen = UnitTracker.getInstance().enemyQueen;
-      const site = tracker.getSite(Queen.getInstance().touchedSite);
+      const site = tracker.getSite(Queen.getInstance().touchedSiteId);
       const distanceFromSiteToEnemyQueen = enemyQueen
         ? site.position.distanceTo(enemyQueen.position)
         : Number.MAX_VALUE;
@@ -586,7 +675,7 @@ namespace CodeRoyale {
 
     private shouldBuildGoldMine = (): boolean => {
       const touchedSite = SiteTracker.getInstance().getSite(
-        Queen.getInstance().touchedSite
+        Queen.getInstance().touchedSiteId
       );
       const hasEnoughGold = touchedSite.goldRemaining >= 80; // could be prop of site?
       if (!hasEnoughGold) {
@@ -609,9 +698,12 @@ namespace CodeRoyale {
   class TowerExpansionStrategy implements Strategy {
     nextStrategy = (): Strategy => {
       const touchedSite = SiteTracker.getInstance().getSite(
-        Queen.getInstance().touchedSite
+        Queen.getInstance().touchedSiteId
       );
-      if (!touchedSite) {
+
+      if (shouldFlee(350, 2200, 5, 18)) {
+        return new FleeStrategy();
+      } else if (!touchedSite) {
         return new ExploreStrategy();
       } else if (shouldExpandTower(touchedSite)) {
         return new TowerExpansionStrategy();
@@ -623,9 +715,11 @@ namespace CodeRoyale {
     execute = (): void => {
       console.error("Expanding TOWER");
       const queen = Queen.getInstance();
-      const touchedSite = SiteTracker.getInstance().getSite(queen.touchedSite);
+      const touchedSite = SiteTracker.getInstance().getSite(
+        queen.touchedSiteId
+      );
       if (shouldExpandTower(touchedSite)) {
-        queen.buildTower(queen.touchedSite);
+        queen.buildTower(queen.touchedSiteId);
       } else {
         approachNearbyBuildingSite();
       }
@@ -635,9 +729,11 @@ namespace CodeRoyale {
   class GoldMineExpansionStrategy implements Strategy {
     nextStrategy = (): Strategy => {
       const touchedSite = SiteTracker.getInstance().getSite(
-        Queen.getInstance().touchedSite
+        Queen.getInstance().touchedSiteId
       );
-      if (!touchedSite) {
+      if (shouldFlee(150, 900, 1, 8)) {
+        return new FleeStrategy();
+      } else if (!touchedSite) {
         return new ExploreStrategy();
       } else if (shouldExpandGoldMine(touchedSite)) {
         return new GoldMineExpansionStrategy();
@@ -649,9 +745,11 @@ namespace CodeRoyale {
     execute = (): void => {
       console.error("Expanding GOLD MINE");
       const queen = Queen.getInstance();
-      const touchedSite = SiteTracker.getInstance().getSite(queen.touchedSite);
+      const touchedSite = SiteTracker.getInstance().getSite(
+        queen.touchedSiteId
+      );
       if (shouldExpandGoldMine(touchedSite)) {
-        queen.buildGoldMine(queen.touchedSite);
+        queen.buildGoldMine(queen.touchedSiteId);
       } else {
         approachNearbyBuildingSite();
       }
@@ -677,7 +775,7 @@ namespace CodeRoyale {
     // Keeping this as a singleton makes it so we can't have multiple queens
     // Enemy queen doesn't need all the same properties so maybe that's fine.
     private static instance: Queen;
-    touchedSite: number = -1;
+    touchedSiteId: number = -1;
 
     private constructor(
       id: number,
@@ -689,7 +787,7 @@ namespace CodeRoyale {
       touchedSite: number
     ) {
       super(id, owner, type, health, x, y);
-      this.touchedSite = touchedSite;
+      this.touchedSiteId = touchedSite;
     }
 
     static createInstance(
@@ -719,7 +817,7 @@ namespace CodeRoyale {
     }
 
     update(update: QueenUpdate) {
-      this.touchedSite = update.touchedSite;
+      this.touchedSiteId = update.touchedSite;
       this.position = update.position;
       this.health = update.health;
     }
@@ -761,13 +859,13 @@ namespace CodeRoyale {
 
     isTouchingAnySite = () => {
       // So far never used...
-      return this.touchedSite !== -1;
+      return this.touchedSiteId !== -1;
     };
 
     // may be superfluous
     isTouchingSite = (siteId: number) => {
       // so far never used...
-      return this.touchedSite === siteId;
+      return this.touchedSiteId === siteId;
     };
   }
 
@@ -787,7 +885,6 @@ namespace CodeRoyale {
 
     public train = (): void => {
       const unitTypeNeeded = this.getUnitTypeNeeded();
-      console.error(`Unit type needed: ${unitTypeNeeded}`);
       if (unitTypeNeeded !== "NONE") {
         switch (unitTypeNeeded) {
           case "KNIGHT":
