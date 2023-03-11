@@ -490,17 +490,6 @@ namespace CodeRoyale {
     nextStrategy: () => Strategy;
   }
 
-  const approachNearbyBuildingSite = (): void => {
-    const site = QueenSenses.getInstance().nextTargetBuildingSite();
-    const queen = Queen.getInstance();
-    if (!site) {
-      console.error("NO SITE FOUND SO JUST STANDING STILL WTF");
-      queen.wait();
-    } else {
-      queen.move(site.position);
-    }
-  };
-
   // May refine further
   // For example, should not flee if I'm getting cornered
   const shouldFlee = (
@@ -523,7 +512,7 @@ namespace CodeRoyale {
       // if the queen is touching a site that we do not own, then we should capture it
       // Apparently which queen can build if they both try depends if the turn is even
       // or odd so if the other queen is touching it, and it's not our turn, just move on.
-      if (shouldFlee(200, 1200, 2, 15)) {
+      if (shouldFlee(200, 1000, 4, 17)) {
         return new FleeStrategy();
       } else if (
         queen.touchedSiteId !== -1 &&
@@ -539,34 +528,120 @@ namespace CodeRoyale {
       console.error("Exploring");
       const queen = Queen.getInstance();
       if (queen.touchedSiteId !== -1) {
-        approachNearbyBuildingSite();
+        queen.approachNearbyBuildingSite();
       } else {
-        approachNearbyBuildingSite();
+        queen.approachNearbyBuildingSite();
       }
     };
   }
 
   class FleeStrategy implements Strategy {
     nextStrategy = (): Strategy => {
-      if (shouldFlee(300, 1100, 2, 13)) {
+      if (shouldFlee(300, 800, 2, 13)) {
         return new FleeStrategy();
       } else {
         return new ExploreStrategy();
       }
     };
 
+    // Run to nearby building site and build tower, ur run away if no building site
     execute = (): void => {
       console.error("Fleeing");
       const queen = Queen.getInstance();
-      const line = QueenSenses.getInstance().awayFromKnightHorde();
+      const touchedSite = SiteTracker.getInstance().getSite(
+        queen.touchedSiteId
+      );
       if (
         queen.isTouchingAnySite() &&
-        !SiteTracker.getInstance().getSite(queen.touchedSiteId).isTower
+        !touchedSite.isTower &&
+        !touchedSite.isFriendly
       ) {
         queen.buildTower(queen.touchedSiteId);
       } else {
-        queen.move(line.end);
+        const targetSite = this.targetTowerSite();
+        console.error(
+          `targetSite: ${targetSite?.position.x}, ${targetSite?.position.y}`
+        );
+        if (targetSite) {
+          queen.move(targetSite.position);
+        } else {
+          console.error("LIKE A BABY (no tower site)");
+          queen.move(this.targetFleeDirection());
+        }
       }
+    };
+
+    targetTowerSite = () => {
+      const siteTracker = SiteTracker.getInstance();
+      let possibleSites = siteTracker.unownedSites.filter((site) => {
+        if (site.isTower) {
+          // don't try to build over any towers
+          return false;
+        } else {
+          const hostileTowers = siteTracker.hostileTowers;
+          const nearestEnemyTowerIndicator = site.position.nearest(
+            hostileTowers.map((tower) => tower.position)
+          );
+          if (!nearestEnemyTowerIndicator.isValid) {
+            // No worries if no enemy towers
+            return true;
+          } else if (
+            // if it's too close to an enemy tower, don't build there
+            nearestEnemyTowerIndicator.distance <
+            hostileTowers[nearestEnemyTowerIndicator.index].towerSpecs.range -
+              60
+          ) {
+            return false;
+          } else {
+            return true;
+          }
+        }
+      });
+      if (possibleSites.length < 1) {
+        possibleSites = SiteTracker.getInstance().allSites.filter(
+          // DUPLICATE CODE START
+          (site) => {
+            if (site.isTower) {
+              // don't try to build over any towers
+              return false;
+            } else {
+              const hostileTowers = siteTracker.hostileTowers;
+              const nearestEnemyTowerIndicator = site.position.nearest(
+                hostileTowers.map((tower) => tower.position)
+              );
+              if (!nearestEnemyTowerIndicator.isValid) {
+                // No worries if no enemy towers
+                return true;
+              } else if (
+                // if it's too close to an enemy tower, don't build there
+                nearestEnemyTowerIndicator.isValid ||
+                nearestEnemyTowerIndicator.distance <
+                  hostileTowers[nearestEnemyTowerIndicator.index].towerSpecs
+                    .range -
+                    60
+              ) {
+                return false;
+              } else {
+                return true;
+              }
+            }
+          }
+          // DUPLICATE CODE END
+        );
+      }
+      if (possibleSites.length < 1) {
+        return null;
+      } else {
+        return SiteTracker.SitesByProximityTo(
+          possibleSites,
+          Queen.getInstance().position
+        )[0];
+      }
+    };
+
+    targetFleeDirection = () => {
+      const line = QueenSenses.getInstance().awayFromKnightHorde();
+      return line.end;
     };
   }
 
@@ -586,7 +661,7 @@ namespace CodeRoyale {
         Queen.getInstance().touchedSiteId
       );
 
-      if (shouldFlee(450, 2200, 4, 20)) {
+      if (shouldFlee(100, 600, 6, 24)) {
         return new FleeStrategy();
       } else if (shouldExpandTower(touchedSite)) {
         return new TowerExpansionStrategy();
@@ -603,7 +678,6 @@ namespace CodeRoyale {
       const site = SiteTracker.getInstance().getSite(queen.touchedSiteId);
       // testing
       const enemyQueen = UnitTracker.getInstance().enemyQueen;
-      console.error(enemyQueen?.id);
       if (enemyQueen) {
         // log distance from the site to enemy queen
         console.error(
@@ -614,8 +688,8 @@ namespace CodeRoyale {
       }
       // end testing
       if (site.isFriendly) {
-        console.error("Site is already friendly, just standing still");
-        queen.wait();
+        console.error("Site is already friendly, moving on");
+        queen.approachNearbyBuildingSite();
       } else {
         const capPref = this.siteCapturePreference();
         switch (capPref) {
@@ -701,7 +775,7 @@ namespace CodeRoyale {
         Queen.getInstance().touchedSiteId
       );
 
-      if (shouldFlee(350, 2200, 5, 18)) {
+      if (shouldFlee(80, 400, 8, 30)) {
         return new FleeStrategy();
       } else if (!touchedSite) {
         return new ExploreStrategy();
@@ -721,7 +795,7 @@ namespace CodeRoyale {
       if (shouldExpandTower(touchedSite)) {
         queen.buildTower(queen.touchedSiteId);
       } else {
-        approachNearbyBuildingSite();
+        queen.approachNearbyBuildingSite();
       }
     };
   }
@@ -731,7 +805,7 @@ namespace CodeRoyale {
       const touchedSite = SiteTracker.getInstance().getSite(
         Queen.getInstance().touchedSiteId
       );
-      if (shouldFlee(150, 900, 1, 8)) {
+      if (shouldFlee(200, 900, 1, 6)) {
         return new FleeStrategy();
       } else if (!touchedSite) {
         return new ExploreStrategy();
@@ -751,7 +825,7 @@ namespace CodeRoyale {
       if (shouldExpandGoldMine(touchedSite)) {
         queen.buildGoldMine(queen.touchedSiteId);
       } else {
-        approachNearbyBuildingSite();
+        queen.approachNearbyBuildingSite();
       }
     };
   }
@@ -822,8 +896,17 @@ namespace CodeRoyale {
       this.health = update.health;
     }
 
+    approachNearbyBuildingSite = () => {
+      const targetSite = QueenSenses.getInstance().nextTargetBuildingSite();
+      if (targetSite) {
+        this.move(targetSite.position);
+      } else {
+        console.error("No target site found. JUST STANDING STILL WTF");
+        this.wait();
+      }
+    };
+
     move = (target: Position) => {
-      console.error(`Moving target: ${target.x}, ${target.y}`);
       // Ensure that destination is within bounds of game board minus margins
       // Needs more nuance but helps prevent pushing aggressively into edge of map
       const mapWidth = 1920;
@@ -930,19 +1013,7 @@ namespace CodeRoyale {
         if (!nearestBarracksIndicator.isValid) {
           console.error("nearestBarracksIndicator NOT VALID");
         }
-        const nearestBarracks = knightBarracks[nearestBarracksIndicator.index]; // does this work?
-        // likely to deprecate this:
-        const closestBarracks = knightBarracks.reduce((closest, barracks) => {
-          const proximity = enemyQueen.position.distanceTo(barracks.position);
-          if (proximity < closest.position.distanceTo(enemyQueen.position)) {
-            return barracks;
-          } else {
-            return closest;
-          }
-        }, knightBarracks[0]);
-        // just checking for now:
-        console.error(`closest barracks: ${closestBarracks.id}`);
-        console.error(`nearest barracks: ${nearestBarracks.id}`);
+        const nearestBarracks = knightBarracks[nearestBarracksIndicator.index]; // does this work? I think so...
         console.log(`TRAIN ${nearestBarracks.id}`);
       }
     };
@@ -953,7 +1024,11 @@ namespace CodeRoyale {
       // if there are no archer barracks then just chill.
       if (archerBarracks.length === 0) {
         console.error("Archers wanted but no barracks found.");
-        this.trainNothing();
+        if (gameState.shouldSave) {
+          this.trainNothing();
+        } else {
+          this.trainKnights();
+        }
       } else {
         // find the archer barracks closest to enemy knight barracks
         const enemyKnightBarracks = siteTracker.hostileKnightBarracks;
@@ -1011,7 +1086,11 @@ namespace CodeRoyale {
       // if there are no giant barracks then just chill.
       if (giantBarracks.length === 0) {
         console.error("Giants wanted but no barracks found.");
-        this.trainNothing();
+        if (gameState.shouldSave) {
+          this.trainNothing();
+        } else {
+          this.trainKnights();
+        }
       } else {
         const enemyTowers = SiteTracker.getInstance().hostileTowers;
         const queenLocation = Queen.getInstance().position;
@@ -1267,7 +1346,7 @@ namespace CodeRoyale {
         const isSafe = hostileTowers.every(
           (tower) =>
             tower.position.distanceTo(site.position) >
-              tower.towerSpecs.range - 100 && !site.isHostile
+              tower.towerSpecs.range - 100 && !site.isFriendly
         );
         return isSafe;
       });
@@ -1278,7 +1357,7 @@ namespace CodeRoyale {
       return this.allSites.filter((site) => {
         const isSafe = hostileTowers.every(
           (tower) =>
-            tower.position.distanceTo(site.position) <
+            tower.position.distanceTo(site.position) >
             tower.towerSpecs.range - 100
         );
         return isSafe;
