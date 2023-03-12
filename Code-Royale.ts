@@ -24,13 +24,6 @@ namespace CodeRoyale {
       return a.distanceTo(b);
     }
 
-    static Average(positions: Position[]) {
-      return new Position(
-        positions.reduce((sum, pos) => sum + pos.x, 0) / positions.length,
-        positions.reduce((sum, pos) => sum + pos.y, 0) / positions.length
-      );
-    }
-
     nearest(positions: Position[]) {
       return positions.reduce(
         (nearest, location, index) => {
@@ -1121,6 +1114,9 @@ namespace CodeRoyale {
       console.log("TRAIN");
     };
 
+    // If I have enough gold to train something multiple types I may as well.
+    // It's rare but I've seen my bot miss these opportunities
+    // Could be array of unit types and then train the first one that is affordable and/or preferable
     private getUnitTypeNeeded = (): UnitTypeNeeded => {
       const unitTracker = UnitTracker.getInstance();
       const siteTracker = SiteTracker.getInstance();
@@ -1139,6 +1135,7 @@ namespace CodeRoyale {
       if (queenFriendlyKnightBarracksNearnessIndicator.distance < 400) {
         return "KNIGHT";
         // if they have more than 3 towers and I don't have enough giants
+        // (could have a giants per enemy tower target)
       } else if (
         siteTracker.hostileTowers.length > 3 &&
         unitTracker.friendlyGiants.length < 3
@@ -1372,6 +1369,10 @@ namespace CodeRoyale {
     shouldSave = true;
     neededBarracksType: BarracksType | "NONE" = "NONE";
 
+    // if this varied by enemy health, or enemy starting health,
+    // it could enable a rush strategy.
+    // Variable savings targets is generally more dynamic and interesting.
+    // *Copilot kept wanting to throw "dynamic" and "interesting" in there.
     readonly targetSavings = 140;
     readonly minSavings = 20;
 
