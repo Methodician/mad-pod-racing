@@ -2,6 +2,13 @@ namespace CodeRoyale2 {
   // general vars
   class GameState {
     gold = 0;
+    // Can track income rate to decide when to build mines, barracks, or train units based on 2-3 consecutive trainings, or even multiple barracks training simultaneously to overwhhelming enemy
+    get incomeRate() {
+      return this.friendlyGoldMines.reduce(
+        (acc, site) => acc + site.mineSpecs.incomeRate,
+        0
+      );
+    }
     startLocation = new Location(0, 0);
     sites: Record<number, SiteI> = {};
     units: UnitI[] = [];
@@ -19,6 +26,21 @@ namespace CodeRoyale2 {
       return Object.values(this.sites);
     }
 
+    get friendlyKnightBarracks() {
+      return this.allSites.filter(
+        (site) =>
+          site.ownerId === 0 &&
+          site.structureType === "BARRACKS" &&
+          site.barracksSpecs.type === "KNIGHT"
+      );
+    }
+
+    get friendlyGoldMines() {
+      return this.allSites.filter(
+        (site) => site.ownerId === 0 && site.structureType === "MINE"
+      );
+    }
+
     getSite(id: number) {
       return this.sites[id];
     }
@@ -27,9 +49,12 @@ namespace CodeRoyale2 {
   class Location {
     x: number;
     y: number;
-    constructor(x: number, y: number) {
+    radius: number;
+
+    constructor(x: number, y: number, radius = 0) {
       this.x = x;
       this.y = y;
+      this.radius = radius;
     }
 
     distanceTo = (location: Location) => {
@@ -51,6 +76,24 @@ namespace CodeRoyale2 {
       return { nearest, distance: nearestDistance };
     };
   }
+
+  // class Line {
+  //   l1: Location;
+  //   l2: Location;
+  //   constructor(l1: Location, l2: Location) {
+  //     this.l1 = l1;
+  //     this.l2 = l2;
+  //   }
+
+  //   intersectsCircle = (location: Location) => {
+  //     const { x, y, radius } = location;
+  //     const { x: x1, y: y1 } = this.l1;
+  //     const { x: x2, y: y2 } = this.l2;
+
+  //     // find slope
+  //     const m = (y2 - y1) / (x2 - x1);
+  //   };
+  // }
 
   type BarracksType = "KNIGHT" | "ARCHER" | "GIANT";
   type StructureType = "MINE" | "TOWER" | "BARRACKS" | "NONE";
@@ -89,9 +132,9 @@ namespace CodeRoyale2 {
     param1 = -1;
     param2 = -1;
 
-    constructor(id: number, x: number, y: number) {
+    constructor(id: number, x: number, y: number, r: number) {
       this.id = id;
-      this.location = new Location(x, y);
+      this.location = new Location(x, y, r);
     }
 
     get structureType(): StructureType {
@@ -113,7 +156,7 @@ namespace CodeRoyale2 {
       return {
         hp: this.param1,
         range: this.param2,
-        isMaxedOut: this.param1 >= this.param2, // TODO: check if this is correct
+        isMaxedOut: this.param1 >= this.param2, // TODO: check if this is correct/useful
       };
     }
 
@@ -177,8 +220,6 @@ namespace CodeRoyale2 {
   }
 
   class QueenSenses {
-    // queen = Queen.getInstance();
-
     scaledProximityThreshold = (min: number, max: number, exponent = 1.8) => {
       if (max < min) {
         throw new Error("max must be greater than min");
@@ -256,8 +297,25 @@ namespace CodeRoyale2 {
       return Queen.instance;
     }
 
-    move = (x: number, y: number) => {
-      console.log(`MOVE ${x} ${y}`);
+    // Should be able to detect obstacles and move around them
+    // If a site is between queen and target, taking into account the site
+    // radius, and queen radius, generate intermediate points to move to
+    move = (target: Location) => {
+      // const straightPath = new Line(queen.location, target);
+      // const intersectingSites = gameState.allSites.filter((site) =>
+      //   straightPath.intersectsCircle(site.location)
+      // );
+      // if (intersectingSites.length > 0) {
+      //   console.error(
+      //     `Queen is blocked by a site: ${intersectingSites[0].id} at ${intersectingSites[0].location.x}, ${intersectingSites[0].location.y}`
+      //   );
+      // }
+      // if (intersectingSites.length === 0) {
+      //   console.log(`MOVE ${target.x} ${target.y}`);
+      //   return;
+      // }
+
+      console.log(`MOVE ${target.x} ${target.y}`);
     };
 
     wait = () => {
@@ -316,14 +374,26 @@ namespace CodeRoyale2 {
               a.location.distanceTo(gameState.startLocation) -
               b.location.distanceTo(gameState.startLocation)
           )[0];
-        const { x, y } = unownedSiteNearestToStart.location;
-        queen.move(x, y);
+        queen.move(unownedSiteNearestToStart.location);
       }
     };
 
     trainStep = () => {
       const trainer = Trainer.getInstance();
-      trainer.wait();
+      // If we have a knight barracks and more than 80 gold, train a knight
+      if (gameState.gold >= 80) {
+        const knightBarracks = gameState.allSites.find(
+          (site) =>
+            site.ownerId === 0 &&
+            site.structureType === "BARRACKS" &&
+            site.barracksSpecs.type === "KNIGHT" &&
+            site.barracksSpecs.turnsUntilCanTrain === 0
+        );
+        if (knightBarracks) {
+          return trainer.trainAt(knightBarracks.id);
+        }
+      }
+      return trainer.wait();
     };
 
     structureTypeToBuild = (): StructureType => {
@@ -332,7 +402,13 @@ namespace CodeRoyale2 {
       }
 
       const site = gameState.sites[queen.touchedSiteId];
-      console.error(`site: ${JSON.stringify(site, null, 2)}`);
+      const queenSenses = new QueenSenses();
+      const closestKnightDistance = () =>
+        site.location.nearest(
+          gameState.units
+            .filter((unit) => unit.unitType === "KNIGHT" && unit.ownerId === 1)
+            .map((unit) => unit.location)
+        ).distance;
       if (site.structureType === "TOWER" && site.ownerId === 1) {
         return "NONE";
       }
@@ -341,12 +417,18 @@ namespace CodeRoyale2 {
         site.ownerId === 0 &&
         !site.towerSpecs.isMaxedOut
       ) {
+        if (
+          !queenSenses.isThreatenedByKnights() &&
+          closestKnightDistance() > 300 &&
+          site.goldRemaining > 100
+        ) {
+          return "MINE";
+        }
         return "TOWER";
       }
       if (site.structureType === "MINE" && !site.mineSpecs.isMaxedOut) {
         return "MINE";
       }
-      const queenSenses = new QueenSenses();
       if (
         queenSenses.isThreatenedByKnights() &&
         site.structureType === "NONE"
@@ -355,15 +437,7 @@ namespace CodeRoyale2 {
       }
 
       if (site.structureType === "NONE") {
-        if (
-          site.location.nearest(
-            gameState.units
-              .filter(
-                (unit) => unit.unitType === "KNIGHT" && unit.ownerId === 1
-              )
-              .map((unit) => unit.location)
-          ).distance < 300
-        ) {
+        if (site.goldRemaining < 50 || closestKnightDistance() < 300) {
           return "TOWER";
         } else {
           return "MINE";
@@ -373,6 +447,41 @@ namespace CodeRoyale2 {
       return "NONE";
     };
   }
+
+  class BuildKnightBarracksStrategy implements Strategy {
+    queenStep = () => {
+      // Approach nearest site if not touching one, else build a knight barracks
+      if (queen.touchedSiteId !== -1) {
+        queen.build(queen.touchedSiteId, "BARRACKS", "KNIGHT");
+      } else {
+        const unownedSiteNearestToQueen = Object.values(gameState.sites)
+          .filter((site) => site.ownerId === -1)
+          .sort(
+            (a, b) =>
+              a.location.distanceTo(queen.location) -
+              b.location.distanceTo(queen.location)
+          )[0];
+        queen.move(unownedSiteNearestToQueen.location);
+      }
+    };
+
+    trainStep = () => {
+      const trainer = Trainer.getInstance();
+      // build knights if savings goal is met
+      if (gameState.gold >= 155) {
+        // build knights at a barracks
+        const barracks = gameState.allSites.find(
+          (site) => site.structureType === "BARRACKS" && site.ownerId === 0
+        );
+        if (barracks) {
+          return trainer.trainAt(barracks.id);
+        }
+      }
+
+      return trainer.wait();
+    };
+  }
+
   const queen = Queen.getInstance();
   const gameState = GameState.getInstance();
   const numSites: number = parseInt(readline());
@@ -383,7 +492,7 @@ namespace CodeRoyale2 {
     const x: number = parseInt(inputs[1]);
     const y: number = parseInt(inputs[2]);
     const radius: number = parseInt(inputs[3]);
-    gameState.sites[siteId] = new Site(siteId, x, y);
+    gameState.sites[siteId] = new Site(siteId, x, y, radius);
   }
 
   // game loop
@@ -423,8 +532,15 @@ namespace CodeRoyale2 {
       }
     }
 
-    const strategy = new ExploreStrategy();
-    strategy.queenStep();
-    strategy.trainStep();
+    // if we have almost enough cash to build knights twice but no knight barracks
+    if (gameState.gold > 145 && gameState.friendlyKnightBarracks.length === 0) {
+      const strategy = new BuildKnightBarracksStrategy();
+      strategy.queenStep();
+      strategy.trainStep();
+    } else {
+      const strategy = new ExploreStrategy();
+      strategy.queenStep();
+      strategy.trainStep();
+    }
   }
 }
