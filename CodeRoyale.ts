@@ -660,26 +660,27 @@ namespace CodeRoyale2 {
 
     queenStep = () => {
       // Approach nearest site if not touching one, else build a knight barracks
-      if (queen.touchedSiteId !== -1) {
-        queen.build(queen.touchedSiteId, "BARRACKS", "KNIGHT");
-      } else {
-        const viableSites = gameState.allSites
-          .filter(
-            (site) =>
-              site.ownerId !== 0 && !queenSenses.isSiteNearEnemyTower(site)
-          )
-          .sort(
-            (a, b) =>
-              a.location.distanceTo(queen.location) -
-              b.location.distanceTo(queen.location)
-          );
-        if (viableSites.length > 0) {
-          queen.move(viableSites[0].location);
-        } else {
-          console.error("NO VIABLE SITES so just sitting WTF");
-          queen.wait();
-        }
+      if (
+        queen.touchedSiteId !== -1 &&
+        gameState.getSite(queen.touchedSiteId).structureType === "NONE"
+      ) {
+        return queen.build(queen.touchedSiteId, "BARRACKS", "KNIGHT");
       }
+      const viableSites = gameState.allSites
+        .filter(
+          (site) =>
+            site.ownerId !== 0 && !queenSenses.isSiteNearEnemyTower(site)
+        )
+        .sort(
+          (a, b) =>
+            a.location.distanceTo(queen.location) -
+            b.location.distanceTo(queen.location)
+        );
+      if (viableSites.length > 0) {
+        return queen.move(viableSites[0].location);
+      }
+      console.error("NO VIABLE SITES so just sitting WTF");
+      return queen.wait();
     };
 
     trainStep = () => {
@@ -717,8 +718,21 @@ namespace CodeRoyale2 {
       // Could adapt this to find average enemy tower location and build at safe site near that
       if (
         queen.touchedSiteId !== -1 &&
-        gameState.getSite(queen.touchedSiteId).structureType !== "BARRACKS"
+        gameState.getSite(queen.touchedSiteId).structureType === "NONE"
       ) {
+        // if the enemy queen is somewhat near and we don't have a knight barracks
+        // near by, build a knight barracks
+        if (
+          gameState.hostileQueen.location.distanceTo(
+            gameState.getSite(queen.touchedSiteId).location
+          ) < 330 &&
+          (gameState.friendlyKnightBarracks.length < 1 ||
+            gameState.hostileQueen.location.nearest(
+              gameState.friendlyKnightBarracks.map((b) => b.location)
+            ).distance > 750)
+        ) {
+          return queen.build(queen.touchedSiteId, "BARRACKS", "KNIGHT");
+        }
         // if the enemy queen is too close, build a tower
         if (
           gameState.hostileQueen.location.distanceTo(
@@ -728,24 +742,23 @@ namespace CodeRoyale2 {
           return queen.build(queen.touchedSiteId, "TOWER");
         }
         return queen.build(queen.touchedSiteId, "BARRACKS", "GIANT");
-      } else {
-        const viableSites = gameState.allSites
-          .filter(
-            (site) =>
-              site.ownerId !== 0 && !queenSenses.isSiteNearEnemyTower(site)
-          )
-          .sort(
-            (a, b) =>
-              a.location.distanceTo(queen.location) -
-              b.location.distanceTo(queen.location)
-          );
-        if (viableSites.length > 0) {
-          return queen.move(viableSites[0].location);
-        } else {
-          console.error("NO VIABLE SITES so just sitting WTF");
-          return queen.wait();
-        }
       }
+
+      const viableSites = gameState.allSites
+        .filter(
+          (site) =>
+            site.ownerId !== 0 && !queenSenses.isSiteNearEnemyTower(site)
+        )
+        .sort(
+          (a, b) =>
+            a.location.distanceTo(queen.location) -
+            b.location.distanceTo(queen.location)
+        );
+      if (viableSites.length > 0) {
+        return queen.move(viableSites[0].location);
+      }
+      console.error("NO VIABLE SITES so just sitting WTF");
+      return queen.wait();
     };
 
     trainStep = () => {
@@ -773,9 +786,25 @@ namespace CodeRoyale2 {
       // Approach nearest site if not touching one, else build an archer barracks
       if (
         queen.touchedSiteId !== -1 &&
-        gameState.getSite(queen.touchedSiteId).structureType !== "BARRACKS"
+        gameState.getSite(queen.touchedSiteId).structureType === "NONE"
       ) {
+        // if the enemy queen is somewhat near and we don't have a knight barracks
+        // near by, build a knight barracks
         if (
+          // repeated in BuildGiantBarracksStrategy
+          gameState.hostileQueen.location.distanceTo(
+            gameState.getSite(queen.touchedSiteId).location
+          ) < 330 &&
+          (gameState.friendlyKnightBarracks.length < 1 ||
+            gameState.hostileQueen.location.nearest(
+              gameState.friendlyKnightBarracks.map((b) => b.location)
+            ).distance > 750)
+        ) {
+          return queen.build(queen.touchedSiteId, "BARRACKS", "KNIGHT");
+        }
+
+        if (
+          // repeated in BuildGiantBarracksStrategy
           gameState.hostileQueen.location.distanceTo(
             gameState.getSite(queen.touchedSiteId).location
           ) < 225
@@ -783,24 +812,23 @@ namespace CodeRoyale2 {
           return queen.build(queen.touchedSiteId, "TOWER");
         }
         return queen.build(queen.touchedSiteId, "BARRACKS", "ARCHER");
-      } else {
-        const viableSites = gameState.allSites
-          .filter(
-            (site) =>
-              site.ownerId !== 0 && !queenSenses.isSiteNearEnemyTower(site)
-          )
-          .sort(
-            (a, b) =>
-              a.location.distanceTo(queen.location) -
-              b.location.distanceTo(queen.location)
-          );
-        if (viableSites.length > 0) {
-          return queen.move(viableSites[0].location);
-        } else {
-          console.error("NO VIABLE SITES so just sitting WTF");
-          return queen.wait();
-        }
       }
+      // repeated in BuildGiantBarracksStrategy
+      const viableSites = gameState.allSites
+        .filter(
+          (site) =>
+            site.ownerId !== 0 && !queenSenses.isSiteNearEnemyTower(site)
+        )
+        .sort(
+          (a, b) =>
+            a.location.distanceTo(queen.location) -
+            b.location.distanceTo(queen.location)
+        );
+      if (viableSites.length > 0) {
+        return queen.move(viableSites[0].location);
+      }
+      console.error("NO VIABLE SITES so just sitting WTF");
+      return queen.wait();
     };
 
     trainStep = () => {
@@ -896,7 +924,8 @@ namespace CodeRoyale2 {
         if (barracks) {
           return trainer.trainAt(barracks.id);
         }
-      } else if (
+      }
+      if (
         gameState.hostileTowers.length > 2 &&
         gameState.gold >= 140 &&
         gameState.friendlyGiantBarracks.length > 0 &&
@@ -907,18 +936,15 @@ namespace CodeRoyale2 {
         if (barracks) {
           return trainer.trainAt(barracks.id);
         }
-      } else if (
-        gameState.friendlyKnightBarracks.length > 0 &&
-        gameState.gold >= 80
-      ) {
+      }
+      if (gameState.friendlyKnightBarracks.length > 0 && gameState.gold >= 80) {
         // build knights at a barracks
         const barracks = gameState.friendlyKnightBarracks[0];
         if (barracks) {
           return trainer.trainAt(barracks.id);
         }
-      } else {
-        return trainer.wait();
       }
+      return trainer.wait();
     };
   }
 
@@ -927,6 +953,11 @@ namespace CodeRoyale2 {
   const queenSenses = new QueenSenses();
   const gameState = GameState.getInstance();
   const numSites: number = parseInt(readline());
+  const explore = new ExploreStrategy();
+  const knightBarracks = new BuildKnightBarracksStrategy();
+  const giantBarracks = new BuildGiantBarracksStrategy();
+  const archerBarracks = new BuildArcherBarracksStrategy();
+  const retreat = new RetreatStrategy();
 
   for (let i = 0; i < numSites; i++) {
     var inputs: string[] = readline().split(" ");
@@ -974,39 +1005,43 @@ namespace CodeRoyale2 {
       }
     }
 
+    // GAME STRATEGIES:
     // if I'm in a bad situation, retreat
     if (
       gameState.hostileKnights.length > 20 ||
       queenSenses.isThreatenedByKnights(250, 3000, 3, 16)
     ) {
-      new RetreatStrategy().execute();
+      retreat.execute();
     }
-    // if the enemy has lots of knights or giants, build archer barracks
+    // if the enemy has lots of knights or giants, and I'm rich enough, build archer barracks
     else if (
       (gameState.hostileKnights.length >= 8 ||
         gameState.hostileGiants.length > 0) &&
-      gameState.friendlyArcherBarracks.length === 0
+      gameState.friendlyArcherBarracks.length === 0 &&
+      (gameState.gold > 150 || gameState.incomeRate > 16)
     ) {
-      new BuildArcherBarracksStrategy().execute();
+      archerBarracks.execute();
     }
-    // if the enemy has 3 or more towers and we don't have a giant barracks, build one
+    // if the enemy has 3 or more towers and we don't have a giant barracks, and I'm rich enough, build one
     else if (
       gameState.hostileTowers.length >= 3 &&
-      gameState.friendlyGiantBarracks.length === 0
+      gameState.friendlyGiantBarracks.length === 0 &&
+      (gameState.gold > 150 || gameState.incomeRate > 16)
     ) {
-      new BuildGiantBarracksStrategy().execute();
+      giantBarracks.execute();
       // if we have almost enough cash to build knights twice but no knight barracks
-      // or if we have lots of gold/income income and less than 2 barracks
+      // or if we have lots of gold/income income and less than 2 barracks and we're near the enemy queen
       // or the enemy queen is just weak, build a knight barracks
     } else if (
       ((gameState.gold > 145 || gameState.hostileQueen.health <= 30) &&
         gameState.friendlyKnightBarracks.length === 0) ||
       ((gameState.incomeRate > 20 || gameState.gold > 210) &&
-        gameState.friendlyKnightBarracks.length < 2)
+        gameState.friendlyKnightBarracks.length < 2 &&
+        gameState.hostileQueen.location.distanceTo(queen.location) < 600)
     ) {
-      new BuildKnightBarracksStrategy().execute();
+      knightBarracks.execute();
     } else {
-      new ExploreStrategy().execute();
+      explore.execute();
     }
   }
 }
