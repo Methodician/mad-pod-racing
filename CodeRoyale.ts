@@ -1,7 +1,7 @@
 namespace CodeRoyale2 {
-  // general vars
   class GameState {
     gold = 0;
+    isInitBuildDone = false;
     // Can track income rate to decide when to build mines, barracks, or train units based on 2-3 consecutive trainings, or even multiple barracks training simultaneously to overwhhelming enemy
     get incomeRate() {
       return this.friendlyGoldMines.reduce(
@@ -20,6 +20,38 @@ namespace CodeRoyale2 {
         GameState.instance = new GameState();
       }
       return GameState.instance;
+    }
+
+    get retreatCorner() {
+      if (this.startLocation.x < 1920 / 2) {
+        return new Location(0, 1000);
+      }
+      return new Location(1920, 0);
+    }
+
+    get initBuildBox() {
+      if (this.startLocation.x < 1920 / 2) {
+        return new BoxBounds(
+          new Location(0, 0),
+          new Location(1920 / 2 - 50, 1000 / 2)
+        );
+      }
+      return new BoxBounds(
+        new Location(1920 / 2 + 50, 1000 / 2),
+        new Location(1920, 1000)
+      );
+    }
+
+    get initBuildSites() {
+      const sites = this.allSites.filter((site) =>
+        this.initBuildBox.contains(site.location)
+      );
+
+      if (sites.every((site) => site.structureType !== "NONE")) {
+        console.error("Init build done!");
+        this.isInitBuildDone = true;
+      }
+      return sites;
     }
 
     get allSites() {
@@ -98,6 +130,15 @@ namespace CodeRoyale2 {
     getSite(id: number) {
       return this.sites[id];
     }
+
+    turnsUntilCanAfford = (cost: number) => {
+      const canAfford = this.gold >= cost;
+      if (canAfford) {
+        return 0;
+      }
+      const goldNeeded = cost - this.gold;
+      return Math.ceil(goldNeeded / this.incomeRate) - 1;
+    };
   }
 
   class Location {
@@ -131,6 +172,25 @@ namespace CodeRoyale2 {
     };
   }
 
+  class BoxBounds {
+    a: Location;
+    b: Location;
+
+    constructor(a: Location, b: Location) {
+      this.a = a;
+      this.b = b;
+    }
+
+    contains = (location: Location) => {
+      return (
+        location.x >= this.a.x &&
+        location.x <= this.b.x &&
+        location.y >= this.a.y &&
+        location.y <= this.b.y
+      );
+    };
+  }
+
   // class Line {
   //   l1: Location;
   //   l2: Location;
@@ -161,10 +221,11 @@ namespace CodeRoyale2 {
     ownerId: number;
     param1: number;
     param2: number;
+    canBeBuiltOn: boolean;
     towerSpecs: {
       hp: number;
       range: number;
-      isMaxedOut: boolean;
+      isBigEnough: boolean;
     };
     barracksSpecs: {
       turnsUntilCanTrain: number;
@@ -206,11 +267,26 @@ namespace CodeRoyale2 {
       }
     }
 
+    get canBeBuiltOn() {
+      if (this.structureType === "BARRACKS") {
+        if (this.ownerId === 0 && this.barracksSpecs.turnsUntilCanTrain > 0) {
+          // Can't build on friendly barracks that are training
+          return false;
+        }
+        // todo: check if can build on hostile barracks that are training
+      }
+      if (this.structureType === "TOWER" && this.ownerId === 1) {
+        // Can't build on enemy towers
+        return false;
+      }
+      return true;
+    }
+
     get towerSpecs() {
       return {
         hp: this.param1,
         range: this.param2,
-        isMaxedOut: this.param1 >= this.param2, // TODO: check if this is correct/useful
+        isBigEnough: this.param2 > 310, // TODO: check if this is correct/useful
       };
     }
 
@@ -440,14 +516,43 @@ namespace CodeRoyale2 {
     };
 
     queenStep = () => {
-      const structureType = this.structureTypeToBuild();
-      if (queen.touchedSiteId !== -1 && structureType !== "NONE") {
-        if (structureType === "BARRACKS") {
-          return queen.build(queen.touchedSiteId, structureType, "ARCHER");
+      const structureTypeToBuild = this.structureTypeToBuild();
+      const touchedSite = gameState.getSite(queen.touchedSiteId);
+      if (
+        queen.touchedSiteId !== -1 &&
+        !(touchedSite.ownerId === 0 && touchedSite.structureType !== "NONE") &&
+        structureTypeToBuild !== "NONE" &&
+        touchedSite.canBeBuiltOn
+      ) {
+        if (
+          gameState.hostileQueen.location.distanceTo(touchedSite.location) < 400
+        ) {
+          return queen.build(queen.touchedSiteId, "TOWER");
+        }
+        if (structureTypeToBuild === "BARRACKS") {
+          return queen.build(
+            queen.touchedSiteId,
+            structureTypeToBuild,
+            "ARCHER"
+          );
         } else {
-          return queen.build(queen.touchedSiteId, structureType);
+          return queen.build(queen.touchedSiteId, structureTypeToBuild);
         }
       }
+      // if initial build out out is not done, nearest viable site in build out box
+      if (!gameState.isInitBuildDone) {
+        const nearestViableSite = gameState.initBuildSites
+          .sort(
+            (a, b) =>
+              a.location.distanceTo(queen.location) -
+              b.location.distanceTo(queen.location)
+          )
+          .find((site) => site.structureType === "NONE");
+        if (nearestViableSite) {
+          return queen.move(nearestViableSite.location);
+        }
+      }
+
       // if queen is under threat, find a viable site near start, else nearest queen
       const isUnderThreat = queenSenses.isThreatenedByKnights(300, 1200, 1, 20);
       if (isUnderThreat) {
@@ -455,18 +560,24 @@ namespace CodeRoyale2 {
       } else {
         console.error("Looking near queen");
       }
-      const viableSitesNearStart = gameState.allSites
-        .filter(
-          (site) =>
-            site.ownerId !== 0 && !queenSenses.isSiteNearEnemyTower(site)
-        )
-        .sort((a, b) =>
-          isUnderThreat
-            ? a.location.distanceTo(gameState.startLocation) -
-              b.location.distanceTo(gameState.startLocation)
-            : a.location.distanceTo(queen.location) -
-              b.location.distanceTo(queen.location)
+
+      let viableSitesNearStart = gameState.allSites.filter(
+        (site) => site.ownerId !== 0 && !queenSenses.isSiteNearEnemyTower(site)
+      );
+
+      if (viableSitesNearStart.length < 1) {
+        viableSitesNearStart = gameState.allSites.filter(
+          (site) => site.ownerId !== 0
         );
+      }
+
+      viableSitesNearStart = viableSitesNearStart.sort((a, b) =>
+        isUnderThreat
+          ? a.location.distanceTo(gameState.startLocation) -
+            b.location.distanceTo(gameState.startLocation)
+          : a.location.distanceTo(queen.location) -
+            b.location.distanceTo(queen.location)
+      );
 
       if (viableSitesNearStart.length > 0) {
         return queen.move(viableSitesNearStart[0].location);
@@ -586,7 +697,7 @@ namespace CodeRoyale2 {
       if (
         site.structureType === "TOWER" &&
         site.ownerId === 0 &&
-        !site.towerSpecs.isMaxedOut
+        !site.towerSpecs.isBigEnough
       ) {
         // If there's a giant nearby, build an archer barracks
         if (
@@ -608,6 +719,9 @@ namespace CodeRoyale2 {
         return "TOWER";
       }
 
+      console.error(
+        `type: ${site.structureType} maxed: ${site.mineSpecs.isMaxedOut} gold: ${site.goldRemaining}`
+      );
       // If it's a friendly mine, and not maxed out
       if (
         site.structureType === "MINE" &&
@@ -665,6 +779,20 @@ namespace CodeRoyale2 {
         gameState.getSite(queen.touchedSiteId).structureType === "NONE"
       ) {
         return queen.build(queen.touchedSiteId, "BARRACKS", "KNIGHT");
+      }
+      // if initial build out is not done, nearest viable site to center
+      if (!gameState.isInitBuildDone) {
+        const center = new Location(1920 / 2, 1000 / 2);
+        const nearestViableSite = gameState.allSites
+          .sort(
+            (a, b) =>
+              a.location.distanceTo(center) - b.location.distanceTo(center)
+          )
+          .find((site) => site.canBeBuiltOn && !(site.ownerId === 0));
+
+        if (nearestViableSite) {
+          return queen.move(nearestViableSite.location);
+        }
       }
       const viableSites = gameState.allSites
         .filter(
@@ -857,53 +985,53 @@ namespace CodeRoyale2 {
 
     queenStep = () => {
       // head towards starting location and surround yourself with towers
-      if (queen.touchedSiteId !== -1) {
+      if (
+        queen.touchedSiteId !== -1 &&
+        gameState.getSite(queen.touchedSiteId).canBeBuiltOn
+      ) {
         const site = gameState.getSite(queen.touchedSiteId);
         if (
-          !queenSenses.isSiteNearEnemyTower(site) &&
-          (site.structureType !== "TOWER" ||
-            (site.structureType === "TOWER" &&
-              site.ownerId === 0 &&
-              !site.towerSpecs.isMaxedOut))
+          gameState.incomeRate < 7 &&
+          site.ownerId !== 0 &&
+          site.location.nearest(
+            gameState.units
+              .filter(
+                (unit) => unit.unitType === "KNIGHT" && unit.ownerId === 1
+              )
+              .map((unit) => unit.location)
+          ).distance > 300
+        ) {
+          return queen.build(queen.touchedSiteId, "MINE");
+        }
+        if (
+          gameState.turnsUntilCanAfford(80 * 2) < 4 &&
+          gameState.friendlyKnightBarracks.length < 1 &&
+          site.ownerId !== 0
+        ) {
+          return queen.build(queen.touchedSiteId, "BARRACKS", "KNIGHT");
+        }
+        if (
+          site.ownerId !== 0 ||
+          (site.structureType === "TOWER" &&
+            site.ownerId === 0 &&
+            !site.towerSpecs.isBigEnough)
         ) {
           return queen.build(queen.touchedSiteId, "TOWER");
         }
       }
       const viableSite = gameState.allSites
-        .filter(
-          (site) =>
-            !queenSenses.isSiteNearEnemyTower(site) &&
-            site.structureType !== "TOWER"
-        )
         .sort(
           (a, b) =>
-            a.location.distanceTo(gameState.startLocation) -
-            b.location.distanceTo(gameState.startLocation)
+            a.location.distanceTo(gameState.retreatCorner) -
+            b.location.distanceTo(gameState.retreatCorner)
         )
-        .sort(
-          // put friendly sites at bottom of list
-          (a, b) => {
-            if (a.ownerId === 0) {
-              return 1;
-            }
-            if (b.ownerId === 0) {
-              return -1;
-            }
-            return 0;
-          }
-        )
-        .sort(
-          // put mines at the bottom of the list
-          (a, b) => {
-            if (a.structureType === "MINE" && a.ownerId === 0) {
-              return 1;
-            }
-            if (b.structureType === "MINE" && b.ownerId === 0) {
-              return -1;
-            }
-            return 0;
-          }
-        )[0];
+        .find(
+          (site) =>
+            site.canBeBuiltOn &&
+            !queenSenses.isSiteNearEnemyTower(site) &&
+            !(site.ownerId === 0)
+        );
+
       if (viableSite) {
         return queen.move(viableSite.location);
       }
@@ -1005,9 +1133,20 @@ namespace CodeRoyale2 {
       }
     }
 
+    // TESTING STUFF:
+
     // GAME STRATEGIES:
-    // if I'm in a bad situation, retreat
+    // If I just built my first barracks, retreat
     if (
+      gameState.friendlyKnightBarracks.length === 1 &&
+      gameState.isInitBuildDone === false &&
+      gameState.incomeRate > 8
+    ) {
+      // gameState.isInitBuildDone = true;
+      retreat.execute();
+    }
+    // if I'm in a bad situation, retreat
+    else if (
       gameState.hostileKnights.length > 20 ||
       queenSenses.isThreatenedByKnights(250, 3000, 3, 16)
     ) {
@@ -1033,7 +1172,8 @@ namespace CodeRoyale2 {
       // or if we have lots of gold/income income and less than 2 barracks and we're near the enemy queen
       // or the enemy queen is just weak, build a knight barracks
     } else if (
-      ((gameState.gold > 145 || gameState.hostileQueen.health <= 30) &&
+      ((gameState.turnsUntilCanAfford(80 * 3) < 6 ||
+        gameState.hostileQueen.health <= 30) &&
         gameState.friendlyKnightBarracks.length === 0) ||
       ((gameState.incomeRate > 20 || gameState.gold > 210) &&
         gameState.friendlyKnightBarracks.length < 2 &&
