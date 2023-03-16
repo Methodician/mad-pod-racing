@@ -211,6 +211,21 @@ namespace CodeRoyale3 {
       state.startLocation === "TOP_LEFT"
         ? new Box(0, 0, 1920 / 2, 1000 / 2)
         : new Box(1920 / 2, 1000 / 2, 1920, 1000);
+
+    bunkerBox = () =>
+      state.startLocation === "TOP_LEFT"
+        ? new Box(0, 1000 / 3, 1920 / 3, 1000)
+        : new Box((1920 / 3) * 2, 0, 1920, (1000 / 3) * 2);
+
+    hunkerCorner = () =>
+      state.startLocation === "TOP_LEFT"
+        ? new Location(0, 1000)
+        : new Location(1920, 0);
+
+    startCorner = () =>
+      state.startLocation === "TOP_LEFT"
+        ? new Location(0, 0)
+        : new Location(1920, 1000);
   }
 
   class Queen {
@@ -264,11 +279,6 @@ namespace CodeRoyale3 {
       unitType: "KNIGHT" | "ARCHER" | "GIANT",
       unitCount = 1
     ) => {
-      console.error(
-        `incomeRate: ${state.incomeRate} gold: ${state.gold} cost: ${
-          this.UnitCosts[unitType] * unitCount
-        }`
-      );
       if (state.gold >= this.UnitCosts[unitType] * unitCount) {
         return 0;
       }
@@ -326,19 +336,15 @@ namespace CodeRoyale3 {
     logDescription = "Setting up";
     private _nextStrategy: Strategy | void = undefined;
 
-    private sitesWithinBuildOutBox = () =>
-      state.sites.filter((site) =>
-        senses.initialBuildOutBox().contains(site.location)
-      );
-
     private getViableSite = () => {
-      let sites = this.sitesWithinBuildOutBox();
+      let sites = state.sites.filter(
+        (site) =>
+          !site.isFriendly &&
+          site.canBeBuiltOn &&
+          senses.initialBuildOutBox().contains(site.location)
+      );
       if (sites.length === 0) {
         sites = state.sites;
-      }
-
-      if (sites.length === 0) {
-        return null;
       }
 
       const viableSites = sites.filter(
@@ -351,10 +357,16 @@ namespace CodeRoyale3 {
 
       return viableSites.reduce(
         (nearest, site) =>
-          site.location.distanceTo(queen.location) ? site : nearest,
+          nearest.location.distanceTo(queen.location) >
+          site.location.distanceTo(queen.location)
+            ? site
+            : nearest,
         sites[0]
       );
     };
+
+    private getInitialKnightTarget = () =>
+      queen.health >= 75 ? 3 : queen.health >= 50 ? 2 : 1;
 
     queenStep = () => {
       if (queen.touchedSiteId === -1) {
@@ -375,9 +387,23 @@ namespace CodeRoyale3 {
       }
 
       // if we can afford 3 knights within 3 turns, build a barracks and exit setup
-      if (trainer.turnsUntilCanAfford("KNIGHT", 3) <= 3) {
-        this._nextStrategy = new ExploreStrategy(); // May want to go right into defensive at first
-        return queen.build(queen.touchedSiteId, "BARRACKS", "KNIGHT");
+      if (
+        trainer.turnsUntilCanAfford("KNIGHT", this.getInitialKnightTarget()) <=
+        this.getInitialKnightTarget() - 1
+      ) {
+        if (
+          !touchedSite.isFriendly &&
+          touchedSite.canBeBuiltOn &&
+          state.friendlyKnightBarracks.length < 1
+        ) {
+          return queen.build(queen.touchedSiteId, "BARRACKS", "KNIGHT");
+        }
+        const viableSite = this.getViableSite();
+        if (viableSite) {
+          return queen.move(viableSite.location);
+        }
+        console.error("NO VIABLE INIT SITES WTF");
+        return queen.move(senses.hunkerCorner());
       }
 
       // build mine if it's decent
@@ -400,6 +426,16 @@ namespace CodeRoyale3 {
     };
 
     trainerStep = () => {
+      if (state.incomeRate > 3 && state.friendlyKnights.length > 0) {
+        this._nextStrategy = new BunkerStrategy();
+      }
+      if (
+        state.friendlyKnightBarracks.length > 0 &&
+        trainer.turnsUntilCanAfford("KNIGHT", this.getInitialKnightTarget()) ===
+          0
+      ) {
+        return trainer.trainAt(state.friendlyKnightBarracks[0].id);
+      }
       return trainer.wait();
     };
 
@@ -444,8 +480,8 @@ namespace CodeRoyale3 {
         if (site) {
           return queen.move(site.location);
         }
-        console.error("No viable site found, WAITING!!!");
-        return queen.wait();
+        console.error("No viable site found, HUNKERING!!");
+        return queen.move(senses.hunkerCorner());
       }
 
       const touchedSite = state.siteRecord[queen.touchedSiteId];
@@ -458,14 +494,44 @@ namespace CodeRoyale3 {
       }
       // if we don't already own it and can build on it
       if (!touchedSite.isFriendly && touchedSite.canBeBuiltOn) {
-        // if queen is threated by knights or it's not a good mine site, build towers, else build mines
-        if (senses.isQueenThreatenedByKnights()) {
+        console.error(
+          state.enemyQueen.location.distanceTo(touchedSite.location)
+        );
+        if (state.enemyQueen.location.distanceTo(touchedSite.location) < 175) {
+          return queen.build(queen.touchedSiteId, "TOWER");
+        }
+        if (
+          state.friendlyKnightBarracks.length < 1 &&
+          trainer.turnsUntilCanAfford("KNIGHT", 2) < 3
+        ) {
+          return queen.build(queen.touchedSiteId, "BARRACKS", "KNIGHT");
+        }
+        if (
+          state.enemyTowers.length > 3 &&
+          state.friendlyGiantBarracks.length < 1 &&
+          trainer.turnsUntilCanAfford("GIANT", 1) < 2
+        ) {
+          return queen.build(queen.touchedSiteId, "BARRACKS", "GIANT");
+        }
+        if (senses.isSiteThreatenedByKnights(touchedSite, 250, 3)) {
           return queen.build(queen.touchedSiteId, "TOWER");
         }
         if (isGoodMineSite(touchedSite)) {
           return queen.build(queen.touchedSiteId, "MINE");
         }
+        if (touchedSite.isFriendly && touchedSite.structureType === "TOWER") {
+          if (
+            state.incomeRate < 6 &&
+            touchedSite.goldRemaining > 200 &&
+            touchedSite.maxMineSize > 1
+          ) {
+            return queen.build(queen.touchedSiteId, "MINE");
+          }
+        }
         if (!touchedSite.isFriendly && touchedSite.canBeBuiltOn) {
+          if (state.incomeRate < 9 && touchedSite.goldRemaining > 80) {
+            return queen.build(queen.touchedSiteId, "MINE");
+          }
           return queen.build(queen.touchedSiteId, "TOWER");
         }
       }
@@ -476,11 +542,18 @@ namespace CodeRoyale3 {
         return queen.move(site.location);
       }
 
-      console.error("No viable site found, WAITING!!!");
-      return queen.wait();
+      console.error("No viable site found, HUNKERING!!!");
+      return queen.move(senses.hunkerCorner());
     };
 
     trainerStep = () => {
+      if (
+        state.friendlyGiantBarracks.length > 1 &&
+        state.friendlyGiants.length < state.enemyTowers.length / 3 &&
+        trainer.turnsUntilCanAfford("GIANT", 1) < 2
+      ) {
+        return trainer.trainAt(state.friendlyGiantBarracks[0].id);
+      }
       // If we can afford knights and have a barracks, train knights
       if (
         trainer.turnsUntilCanAfford("KNIGHT") < 2 &&
@@ -492,9 +565,148 @@ namespace CodeRoyale3 {
       return trainer.wait();
     };
     nextStrategy = () => {
+      // if the queen is threatened by MANY knights, hunker in bunker
+      if (senses.isQueenThreatenedByKnights(150, 600, 4, 21)) {
+        return new BunkerStrategy();
+      }
+
       return;
     };
   }
+
+  class BunkerStrategy implements Strategy {
+    logDescription = "Hunkering in Bunker!";
+    private _hasInitHunkerPassed = false;
+
+    private areTooManyKnightsInHunkerBox = (
+      minKnights: number,
+      maxKnights: number,
+      exponent = 1
+    ) => {
+      const scaledKnightCount =
+        (maxKnights - minKnights) * Math.pow(queen.health / 100, exponent) +
+        minKnights;
+      return (
+        state.enemyKnights.filter((knight) =>
+          senses.bunkerBox().contains(knight.location)
+        ).length > scaledKnightCount
+      );
+    };
+    private safeCorner = () => {
+      if (this.areTooManyKnightsInHunkerBox(3, 11)) {
+        return senses.startCorner();
+      }
+      return senses.hunkerCorner();
+    };
+
+    private getViableSite = () => {
+      let sites = state.sites.filter(
+        (site) =>
+          senses.bunkerBox().contains(site.location) &&
+          site.canBeBuiltOn &&
+          !site.isFriendly
+      );
+
+      if (sites.length === 0) {
+        return null;
+      }
+
+      return sites.reduce(
+        (nearest, site) =>
+          nearest.location.distanceTo(queen.location) >
+          site.location.distanceTo(queen.location)
+            ? site
+            : nearest,
+        sites[0]
+      );
+    };
+
+    queenStep = () => {
+      if (queen.touchedSiteId === -1) {
+        // if there is a viable site in the bunker box, approach it
+        const site = this.getViableSite();
+        if (site) {
+          return queen.move(site.location);
+        }
+        return queen.move(this.safeCorner());
+      }
+
+      const touchedSite = state.siteRecord[queen.touchedSiteId];
+      // if lots of money/income and no archer barracks, build one if possible
+      if (
+        (state.gold > 300 || state.incomeRate > 8) &&
+        !touchedSite.isFriendly &&
+        touchedSite.canBeBuiltOn &&
+        state.friendlyArcherBarracks.length === 0
+      ) {
+        return queen.build(queen.touchedSiteId, "BARRACKS", "ARCHER");
+      }
+
+      // Expand if it's a tower that's not kinda big
+      if (
+        touchedSite.structureType === "TOWER" &&
+        touchedSite.towerSpecs.range < 255
+      ) {
+        return queen.build(queen.touchedSiteId, "TOWER");
+      }
+
+      // build a tower if possible
+      if (touchedSite.canBeBuiltOn && !touchedSite.isFriendly) {
+        return queen.build(queen.touchedSiteId, "TOWER");
+      }
+
+      // if there are viable sites, approach one
+      const viableSite = this.getViableSite();
+      if (viableSite) {
+        return queen.move(viableSite.location);
+      }
+
+      // If nothing else to do run to far corner
+      return queen.move(this.safeCorner());
+    };
+
+    trainerStep = () => {
+      // if we can afford archers and have a barracks
+      if (
+        trainer.turnsUntilCanAfford("ARCHER") < 2 &&
+        state.friendlyArcherBarracks.length > 0
+      ) {
+        return trainer.trainAt(state.friendlyArcherBarracks[0].id);
+      }
+      // if we can afford many knights and have a barracks
+      if (
+        trainer.turnsUntilCanAfford("KNIGHT", 2) < 2 &&
+        state.friendlyKnightBarracks.length > 0
+      ) {
+        return trainer.trainAt(state.friendlyKnightBarracks[0].id);
+      }
+      return trainer.wait();
+    };
+
+    nextStrategy = () => {
+      if (!this._hasInitHunkerPassed) {
+        // if there are no sites left in the bunker box
+        if (
+          this.getViableSite() === null &&
+          !this.areTooManyKnightsInHunkerBox(1, 4)
+        ) {
+          this._hasInitHunkerPassed = true;
+        }
+      }
+      if (this._hasInitHunkerPassed) {
+        // if the queen is super safe, go to the next strategy
+        if (
+          !senses.isQueenThreatenedByKnights(400, 1300, 2, 7) &&
+          !this.areTooManyKnightsInHunkerBox(1, 7)
+        ) {
+          return new ExploreStrategy();
+        }
+      }
+      return;
+    };
+  }
+
+  //   class GoldDiggerStrategy implements Strategy {}
 
   class GameState {
     gold = 0;
@@ -510,6 +722,37 @@ namespace CodeRoyale3 {
       }
       return GameState.instance;
     }
+
+    update = () => {
+      const inputs: string[] = readline().split(" ");
+      this.gold = parseInt(inputs[0]);
+      queen.touchedSiteId = parseInt(inputs[1]); // -1 if none
+      for (let i = 0; i < numSites; i++) {
+        const inputs: string[] = readline().split(" ");
+        const siteId: number = parseInt(inputs[0]);
+        this.siteRecord[siteId].goldRemaining = parseInt(inputs[1]); // -1 if unknown
+        this.siteRecord[siteId].maxMineSize = parseInt(inputs[2]); // -1 if unknown
+        this.siteRecord[siteId].structureTypeId = parseInt(inputs[3]); // -1 = No structure, 0 = Goldmine, 1 = Tower, 2 = Barracks
+        this.siteRecord[siteId].ownerId = parseInt(inputs[4]); // -1 = No structure, 0 = Friendly, 1 = Enemy
+        this.siteRecord[siteId].param1 = parseInt(inputs[5]);
+        this.siteRecord[siteId].param2 = parseInt(inputs[6]);
+      }
+      const numUnits: number = parseInt(readline());
+      this.units = [];
+      for (let i = 0; i < numUnits; i++) {
+        const inputs: string[] = readline().split(" ");
+        const x: number = parseInt(inputs[0]);
+        const y: number = parseInt(inputs[1]);
+        const owner: number = parseInt(inputs[2]);
+        const unitType: number = parseInt(inputs[3]); // -1 = QUEEN, 0 = KNIGHT, 1 = ARCHER, 2 = GIANT
+        const health: number = parseInt(inputs[4]);
+        this.units.push(new Unit(x, y, health, owner, unitType));
+        if (owner === 0 && unitType === -1 && this.startLocation === null) {
+          // The game just started. Store init variables
+          this.startLocation = x < 500 ? "TOP_LEFT" : "BOTTOM_RIGHT";
+        }
+      }
+    };
 
     get incomeRate() {
       return this.sites.reduce((sum, site) => {
@@ -532,6 +775,12 @@ namespace CodeRoyale3 {
     get friendlyKnights() {
       return this.units.filter(
         (unit) => unit.isFriendly && unit.unitType === "KNIGHT"
+      );
+    }
+
+    get friendlyGiants() {
+      return this.units.filter(
+        (unit) => unit.isFriendly && unit.unitType === "GIANT"
       );
     }
 
@@ -560,6 +809,24 @@ namespace CodeRoyale3 {
           site.barracksSpecs.type === "KNIGHT"
       );
     }
+
+    get friendlyArcherBarracks() {
+      return this.sites.filter(
+        (site) =>
+          site.isFriendly &&
+          site.structureType === "BARRACKS" &&
+          site.barracksSpecs.type === "ARCHER"
+      );
+    }
+
+    get friendlyGiantBarracks() {
+      return this.sites.filter(
+        (site) =>
+          site.isFriendly &&
+          site.structureType === "BARRACKS" &&
+          site.barracksSpecs.type === "GIANT"
+      );
+    }
   }
 
   const state = GameState.getInstance();
@@ -583,40 +850,7 @@ namespace CodeRoyale3 {
 
   // game loop
   while (true) {
-    const inputs: string[] = readline().split(" ");
-    state.gold = parseInt(inputs[0]);
-    queen.touchedSiteId = parseInt(inputs[1]); // -1 if none
-    for (let i = 0; i < numSites; i++) {
-      const inputs: string[] = readline().split(" ");
-      const siteId: number = parseInt(inputs[0]);
-      state.siteRecord[siteId].goldRemaining = parseInt(inputs[1]); // -1 if unknown
-      state.siteRecord[siteId].maxMineSize = parseInt(inputs[2]); // -1 if unknown
-      state.siteRecord[siteId].structureTypeId = parseInt(inputs[3]); // -1 = No structure, 0 = Goldmine, 1 = Tower, 2 = Barracks
-      state.siteRecord[siteId].ownerId = parseInt(inputs[4]); // -1 = No structure, 0 = Friendly, 1 = Enemy
-      state.siteRecord[siteId].param1 = parseInt(inputs[5]);
-      state.siteRecord[siteId].param2 = parseInt(inputs[6]);
-    }
-    const numUnits: number = parseInt(readline());
-    state.units = [];
-    for (let i = 0; i < numUnits; i++) {
-      const inputs: string[] = readline().split(" ");
-      const x: number = parseInt(inputs[0]);
-      const y: number = parseInt(inputs[1]);
-      const owner: number = parseInt(inputs[2]);
-      const unitType: number = parseInt(inputs[3]); // -1 = QUEEN, 0 = KNIGHT, 1 = ARCHER, 2 = GIANT
-      const health: number = parseInt(inputs[4]);
-      state.units.push(new Unit(x, y, health, owner, unitType));
-      if (owner === 0 && unitType === -1 && state.startLocation === null) {
-        // The game just started. Store init variables
-        state.startLocation = x < 500 ? "TOP_LEFT" : "BOTTOM_RIGHT";
-      }
-    }
-
-    // Write an action using console.log()
-    // To debug: console.error('Debug messages...');
-
-    // First line: A valid queen action
-    // Second line: A set of training instructions
+    state.update();
     currentStrategy = executor.execute(currentStrategy) || currentStrategy;
   }
 }
