@@ -88,7 +88,7 @@ namespace CodeRoyale3 {
 
     get canBeBuiltOn() {
       if (this.structureType === "BARRACKS") {
-        if (this.ownerId === 0 && this.barracksSpecs.turnsUntilCanTrain > 0) {
+        if (this.isFriendly && this.barracksSpecs.turnsUntilCanTrain > 0) {
           // Can't build on friendly barracks that are training
           return false;
         }
@@ -99,6 +99,10 @@ namespace CodeRoyale3 {
         return false;
       }
       return true;
+    }
+
+    get isFriendly() {
+      return this.ownerId === 0;
     }
 
     get towerSpecs() {
@@ -158,6 +162,10 @@ namespace CodeRoyale3 {
         default:
           throw new Error("Unknown unit type");
       }
+    }
+
+    get isFriendly() {
+      return this.ownerId === 0;
     }
   }
 
@@ -296,20 +304,20 @@ namespace CodeRoyale3 {
   }
 
   const shouldExpandGoldMine = (site: Site) =>
-    site.ownerId === 0 &&
+    site.isFriendly &&
     site.structureType === "MINE" &&
     site.goldRemaining > 60 &&
     !site.mineSpecs.isMaxedOut &&
     !senses.isSiteThreatenedByKnights(site);
 
   const shouldExpandTower = (site: Site) =>
-    site.ownerId === 0 &&
+    site.isFriendly &&
     site.structureType === "TOWER" &&
     !site.towerSpecs.isBigEnough &&
     !senses.isQueenThreatenedByKnights(30, 160, 1, 9);
 
   const isGoodMineSite = (site: Site) =>
-    site.ownerId !== 0 &&
+    !site.isFriendly &&
     site.goldRemaining > 30 &&
     site.structureType !== "TOWER" &&
     !senses.isSiteThreatenedByKnights(site);
@@ -323,19 +331,40 @@ namespace CodeRoyale3 {
         senses.initialBuildOutBox().contains(site.location)
       );
 
-    private getViableSite = () =>
-      this.sitesWithinBuildOutBox().reduce((nearest, site) =>
-        site.ownerId !== 0 &&
-        nearest.location.distanceTo(queen.location) >
-          site.location.distanceTo(queen.location)
-          ? site
-          : nearest
+    private getViableSite = () => {
+      let sites = this.sitesWithinBuildOutBox();
+      if (sites.length === 0) {
+        sites = state.sites;
+      }
+
+      if (sites.length === 0) {
+        return null;
+      }
+
+      const viableSites = sites.filter(
+        (site) => !site.isFriendly && site.canBeBuiltOn
       );
+
+      if (viableSites.length === 0) {
+        return null;
+      }
+
+      return viableSites.reduce(
+        (nearest, site) =>
+          site.location.distanceTo(queen.location) ? site : nearest,
+        sites[0]
+      );
+    };
 
     queenStep = () => {
       if (queen.touchedSiteId === -1) {
         // approach nearest site within build out box
-        return queen.move(this.getViableSite().location);
+        const site = this.getViableSite();
+        if (site) {
+          return queen.move(site.location);
+        }
+        console.error("No viable site found, WAITING!!!");
+        return queen.wait();
       }
 
       const touchedSite = state.siteRecord[queen.touchedSiteId];
@@ -356,8 +385,18 @@ namespace CodeRoyale3 {
         return queen.build(queen.touchedSiteId, "MINE");
       }
 
+      // default to building a tower
+      if (!touchedSite.isFriendly && touchedSite.canBeBuiltOn) {
+        return queen.build(queen.touchedSiteId, "TOWER");
+      }
+
       // If there's nothing to do at this site, move on
-      return queen.move(this.getViableSite().location);
+      const site = this.getViableSite();
+      if (site) {
+        return queen.move(site.location);
+      }
+      console.error("No viable site found, WAITING!!!");
+      return queen.wait();
     };
 
     trainerStep = () => {
@@ -374,31 +413,26 @@ namespace CodeRoyale3 {
     logDescription = "Exploring";
 
     private getViableSite = () => {
-      // keeps returning sites I already own. No idea why and GPT 4 doesn't get it either.
-      //   const site = state.sites.reduce((nearest, site) => {
-      //     return site.ownerId !== 0 &&
-      //       nearest.location.distanceTo(queen.location) >
-      //         site.location.distanceTo(queen.location) &&
-      //       !senses.isSiteThreatenedByTowers(site)
-      //       ? site
-      //       : nearest;
-      //   });
-      const viableSites = state.sites.filter((site) => {
-        return site.ownerId !== 0 && !senses.isSiteThreatenedByTowers(site);
-      });
+      const viableSites = state.sites.filter(
+        (site) =>
+          !site.isFriendly &&
+          site.canBeBuiltOn &&
+          !senses.isSiteThreatenedByTowers(site)
+      );
 
-      //   const sortedByDistanceFromQueen = viableSites.sort((a, b) => {
-      //     return (
-      //       a.location.distanceTo(queen.location) -
-      //       b.location.distanceTo(queen.location)
-      //     );
-      //   });
-      const site = viableSites.reduce((nearest, site) => {
-        return nearest.location.distanceTo(queen.location) >
+      if (viableSites.length === 0) {
+        return null;
+      }
+
+      // Closest one to queen
+      const site = viableSites.reduce(
+        (nearest, site) =>
+          nearest.location.distanceTo(queen.location) >
           site.location.distanceTo(queen.location)
-          ? site
-          : nearest;
-      }, viableSites[0]);
+            ? site
+            : nearest,
+        viableSites[0]
+      );
 
       return site;
     };
@@ -406,7 +440,12 @@ namespace CodeRoyale3 {
     queenStep = () => {
       if (queen.touchedSiteId === -1) {
         // approach nearest safe, unowned building site
-        return queen.move(this.getViableSite().location);
+        const site = this.getViableSite();
+        if (site) {
+          return queen.move(site.location);
+        }
+        console.error("No viable site found, WAITING!!!");
+        return queen.wait();
       }
 
       const touchedSite = state.siteRecord[queen.touchedSiteId];
@@ -418,7 +457,7 @@ namespace CodeRoyale3 {
         return queen.build(queen.touchedSiteId, "MINE");
       }
       // if we don't already own it and can build on it
-      if (touchedSite.ownerId !== 0 && touchedSite.canBeBuiltOn) {
+      if (!touchedSite.isFriendly && touchedSite.canBeBuiltOn) {
         // if queen is threated by knights or it's not a good mine site, build towers, else build mines
         if (senses.isQueenThreatenedByKnights()) {
           return queen.build(queen.touchedSiteId, "TOWER");
@@ -426,11 +465,19 @@ namespace CodeRoyale3 {
         if (isGoodMineSite(touchedSite)) {
           return queen.build(queen.touchedSiteId, "MINE");
         }
-        if (touchedSite.ownerId !== 0) {
+        if (!touchedSite.isFriendly && touchedSite.canBeBuiltOn) {
           return queen.build(queen.touchedSiteId, "TOWER");
         }
       }
-      return queen.move(this.getViableSite().location);
+
+      // If there's nothing to do at this site, move on
+      const site = this.getViableSite();
+      if (site) {
+        return queen.move(site.location);
+      }
+
+      console.error("No viable site found, WAITING!!!");
+      return queen.wait();
     };
 
     trainerStep = () => {
@@ -484,7 +531,7 @@ namespace CodeRoyale3 {
 
     get friendlyKnights() {
       return this.units.filter(
-        (unit) => unit.ownerId === 0 && unit.unitType === "KNIGHT"
+        (unit) => unit.isFriendly && unit.unitType === "KNIGHT"
       );
     }
 
@@ -501,14 +548,14 @@ namespace CodeRoyale3 {
     }
     get friendlyQueen() {
       return this.units.find(
-        (unit) => unit.ownerId === 0 && unit.unitType === "QUEEN"
+        (unit) => unit.isFriendly && unit.unitType === "QUEEN"
       ) as Unit; // there will always be a friendly queen
     }
 
     get friendlyKnightBarracks() {
       return this.sites.filter(
         (site) =>
-          site.ownerId === 0 &&
+          site.isFriendly &&
           site.structureType === "BARRACKS" &&
           site.barracksSpecs.type === "KNIGHT"
       );
