@@ -1080,13 +1080,14 @@ namespace CodeRoyale2 {
   const queen = Queen.getInstance();
   const queenSenses = new QueenSenses();
   const gameState = GameState.getInstance();
-  const numSites: number = parseInt(readline());
   const explore = new ExploreStrategy();
   const knightBarracks = new BuildKnightBarracksStrategy();
   const giantBarracks = new BuildGiantBarracksStrategy();
   const archerBarracks = new BuildArcherBarracksStrategy();
   const retreat = new RetreatStrategy();
 
+  const numSites: number = parseInt(readline());
+  console.error(`number of sites: ${numSites}`);
   for (let i = 0; i < numSites; i++) {
     var inputs: string[] = readline().split(" ");
     const siteId: number = parseInt(inputs[0]);
