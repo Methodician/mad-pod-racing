@@ -28,6 +28,65 @@ namespace CodeRoyale3 {
       });
       return { nearest, distance: nearestDistance };
     };
+
+    containsPoint(x: number, y: number): boolean {
+      const distanceSquared =
+        (this.x - x) * (this.x - x) + (this.y - y) * (this.y - y);
+      return distanceSquared <= this.radius * this.radius;
+    }
+
+    containsLocationCenter(other: Location): boolean {
+      return this.containsPoint(other.x, other.y);
+    }
+
+    isWithinRadius(other: Location): boolean {
+      const distanceSquared =
+        (this.x - other.x) * (this.x - other.x) +
+        (this.y - other.y) * (this.y - other.y);
+      return (
+        distanceSquared <=
+        (this.radius + other.radius) * (this.radius + other.radius)
+      );
+    }
+  }
+
+  class Line {
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+
+    constructor(x1: number, y1: number, x2: number, y2: number) {
+      this.x1 = x1;
+      this.y1 = y1;
+      this.x2 = x2;
+      this.y2 = y2;
+    }
+
+    doesIntersectRadius = (location: Location, extraPadding = 0) => {
+      const dx = this.x2 - this.x1;
+      const dy = this.y2 - this.y1;
+      const a = dx * dx + dy * dy;
+      const b = 2 * (dx * (this.x1 - location.x) + dy * (this.y1 - location.y));
+      const c =
+        (this.x1 - location.x) * (this.x1 - location.x) +
+        (this.y1 - location.y) * (this.y1 - location.y) -
+        location.radius * location.radius;
+
+      const discriminant = b * b - 4 * a * c;
+
+      // If the discriminant is negative, there is no intersection
+      if (discriminant < 0) {
+        return false;
+      }
+
+      // Find the two points of intersection along the line
+      const t1 = (-b - Math.sqrt(discriminant)) / (2 * a);
+      const t2 = (-b + Math.sqrt(discriminant)) / (2 * a);
+
+      // Check if either intersection point is on the line segment
+      return (t1 >= 0 && t1 <= 1) || (t2 >= 0 && t2 <= 1);
+    };
   }
 
   // Defines a rectangle using two corners
@@ -207,6 +266,7 @@ namespace CodeRoyale3 {
         (knight) => knight.location.distanceTo(site.location) < range
       ).length >= count;
 
+    // May deprecate in favor of point/radius approach
     initialBuildOutBox = () =>
       state.startLocation === "TOP_LEFT"
         ? new Box(0, 0, 1920 / 2, 1000 / 2)
@@ -219,13 +279,56 @@ namespace CodeRoyale3 {
 
     hunkerCorner = () =>
       state.startLocation === "TOP_LEFT"
-        ? new Location(0, 1000)
-        : new Location(1920, 0);
+        ? new Location(0, 1000, 800)
+        : new Location(1920, 0, 800);
 
     startCorner = () =>
       state.startLocation === "TOP_LEFT"
-        ? new Location(0, 0)
-        : new Location(1920, 1000);
+        ? new Location(0, 0, 800)
+        : new Location(1920, 1000, 800);
+
+    findTangentPoints = (
+      line: Line,
+      location: Location,
+      padding = 1
+    ): {
+      tangent1: Location;
+      tangent2: Location;
+    } => {
+      const dx = line.x2 - line.x1;
+      const dy = line.y2 - line.y1;
+
+      // Find the distance between the start point and the circle's center
+      const distStartToCenter = Math.sqrt(
+        (location.x - line.x1) * (location.x - line.x1) +
+          (location.y - line.y1) * (location.y - line.y1)
+      );
+
+      // Calculate the angle of the line segment
+      const angle = Math.atan2(dy, dx);
+
+      // Calculate the angle to reach the tangent point
+      const tangentAngle = Math.asin(
+        (location.radius + padding) / distStartToCenter
+      );
+
+      // Find the angles of the two tangent points
+      const angle1 = angle + tangentAngle;
+      const angle2 = angle - tangentAngle;
+
+      // Calculate the tangent points
+      const tangent1 = new Location(
+        Math.round(location.x + (location.radius + padding) * Math.sin(angle1)),
+        Math.round(location.y - (location.radius + padding) * Math.cos(angle1))
+      );
+
+      const tangent2 = new Location(
+        Math.round(location.x + (location.radius + padding) * Math.sin(angle2)),
+        Math.round(location.y - (location.radius + padding) * Math.cos(angle2))
+      );
+
+      return { tangent1, tangent2 };
+    };
   }
 
   class Queen {
@@ -248,7 +351,51 @@ namespace CodeRoyale3 {
     }
 
     move = (target: Location) => {
-      return `MOVE ${target.x} ${target.y}`;
+      let _target = target;
+      const straightPath = new Line(
+        this.location.x,
+        this.location.y,
+        target.x,
+        target.y
+      );
+      const sitesByProximityToQueen = state.sites.sort(
+        (a, b) =>
+          a.location.distanceTo(queen.location) -
+          b.location.distanceTo(queen.location)
+      );
+
+      for (let site of sitesByProximityToQueen) {
+        if (site.location.x === target.x && site.location.y === target.y) {
+          continue;
+        }
+        // Adding queen radius (30)
+        if (straightPath.doesIntersectRadius(site.location, 30)) {
+          const { tangent1, tangent2 } = senses.findTangentPoints(
+            straightPath,
+            target
+          );
+          const tangent1Dist = tangent1.distanceTo(target);
+          const tangent2Dist = tangent2.distanceTo(target);
+          console.error(
+            `target: ${target.x} ${target.y}, tangent1: ${tangent1.x} ${tangent1.y}, tangent2: ${tangent2.x} ${tangent2.y}`
+          );
+          _target = tangent1Dist < tangent2Dist ? tangent1 : tangent2;
+          break;
+        }
+      }
+
+      if (
+        state.sites.some(
+          (site) =>
+            !(site.location.x === target.x && site.location.y === target.y) &&
+            straightPath.doesIntersectRadius(site.location)
+        )
+      ) {
+        console.error(
+          `Queen is trying to move through a site when approaching: ${target.x} ${target.y}`
+        );
+      }
+      return `MOVE ${_target.x} ${_target.y}`;
     };
 
     wait = () => {
@@ -332,37 +479,45 @@ namespace CodeRoyale3 {
     site.structureType !== "TOWER" &&
     !senses.isSiteThreatenedByKnights(site);
 
-  class SetupStrategy implements Strategy {
-    logDescription = "Setting up";
-    private _nextStrategy: Strategy | void = undefined;
+  class StrategyBase {
+    logDescription = "Core Strategy";
+    _nextStrategy: Strategy | void = undefined;
+    getUnCapturedViableSites = () =>
+      state.sites.filter((site) => !site.isFriendly && site.canBeBuiltOn);
+    getAllViableSites = () => state.sites.filter((site) => site.canBeBuiltOn);
 
-    private getViableSite = () => {
-      let sites = state.sites.filter(
-        (site) =>
-          !site.isFriendly &&
-          site.canBeBuiltOn &&
-          senses.initialBuildOutBox().contains(site.location)
-      );
-      if (sites.length === 0) {
+    siteNearestTo = (location: Location, sites?: Site[]) => {
+      if (!sites) {
         sites = state.sites;
       }
-
-      const viableSites = sites.filter(
-        (site) => !site.isFriendly && site.canBeBuiltOn
-      );
-
-      if (viableSites.length === 0) {
-        return null;
-      }
-
-      return viableSites.reduce(
+      return sites.reduce(
         (nearest, site) =>
-          nearest.location.distanceTo(queen.location) >
-          site.location.distanceTo(queen.location)
+          nearest.location.distanceTo(location) >
+          site.location.distanceTo(location)
             ? site
             : nearest,
         sites[0]
       );
+    };
+  }
+
+  class SetupStrategy extends StrategyBase implements Strategy {
+    logDescription = "Setting up";
+
+    private getViableSite = () => {
+      let sites = this.getUnCapturedViableSites().filter((site) =>
+        senses.initialBuildOutBox().contains(site.location)
+      );
+      if (sites.length === 0) {
+        sites = this.getUnCapturedViableSites().filter((site) =>
+          senses.bunkerBox().contains(site.location)
+        );
+      }
+      if (sites.length === 0) {
+        return null;
+      }
+
+      return this.siteNearestTo(queen.location, sites);
     };
 
     private getInitialKnightTarget = () =>
@@ -445,32 +600,19 @@ namespace CodeRoyale3 {
     };
   }
 
-  class ExploreStrategy implements Strategy {
+  class ExploreStrategy extends StrategyBase implements Strategy {
     logDescription = "Exploring";
 
     private getViableSite = () => {
-      const viableSites = state.sites.filter(
-        (site) =>
-          !site.isFriendly &&
-          site.canBeBuiltOn &&
-          !senses.isSiteThreatenedByTowers(site)
+      const viableSites = this.getUnCapturedViableSites().filter(
+        (site) => !senses.isSiteThreatenedByTowers(site)
       );
 
       if (viableSites.length === 0) {
         return null;
       }
 
-      // Closest one to queen
-      const site = viableSites.reduce(
-        (nearest, site) =>
-          nearest.location.distanceTo(queen.location) >
-          site.location.distanceTo(queen.location)
-            ? site
-            : nearest,
-        viableSites[0]
-      );
-
-      return site;
+      return this.siteNearestTo(queen.location, viableSites);
     };
 
     queenStep = () => {
@@ -574,7 +716,7 @@ namespace CodeRoyale3 {
     };
   }
 
-  class BunkerStrategy implements Strategy {
+  class BunkerStrategy extends StrategyBase implements Strategy {
     logDescription = "Hunkering in Bunker!";
     private _hasInitHunkerPassed = false;
 
@@ -600,25 +742,17 @@ namespace CodeRoyale3 {
     };
 
     private getViableSite = () => {
-      let sites = state.sites.filter(
-        (site) =>
-          senses.bunkerBox().contains(site.location) &&
-          site.canBeBuiltOn &&
-          !site.isFriendly
+      const safeCorner = this.safeCorner();
+      let sites = this.getUnCapturedViableSites().filter((site) =>
+        safeCorner.containsLocationCenter(site.location)
       );
 
       if (sites.length === 0) {
         return null;
       }
 
-      return sites.reduce(
-        (nearest, site) =>
-          nearest.location.distanceTo(queen.location) >
-          site.location.distanceTo(queen.location)
-            ? site
-            : nearest,
-        sites[0]
-      );
+      // May experiment with focusing on site nearest to the corner
+      return this.siteNearestTo(queen.location, sites);
     };
 
     queenStep = () => {
