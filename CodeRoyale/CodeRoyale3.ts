@@ -291,10 +291,7 @@ namespace CodeRoyale3 {
       line: Line,
       location: Location,
       padding = 1
-    ): {
-      tangent1: Location;
-      tangent2: Location;
-    } => {
+    ): { tangent1: Location | null; tangent2: Location | null } => {
       const dx = line.x2 - line.x1;
       const dy = line.y2 - line.y1;
 
@@ -303,6 +300,10 @@ namespace CodeRoyale3 {
         (location.x - line.x1) * (location.x - line.x1) +
           (location.y - line.y1) * (location.y - line.y1)
       );
+
+      if (distStartToCenter <= location.radius + padding) {
+        return { tangent1: null, tangent2: null };
+      }
 
       // Calculate the angle of the line segment
       const angle = Math.atan2(dy, dx);
@@ -374,6 +375,9 @@ namespace CodeRoyale3 {
             straightPath,
             target
           );
+          if (!tangent1 || !tangent2) {
+            continue;
+          }
           const tangent1Dist = tangent1.distanceTo(target);
           const tangent2Dist = tangent2.distanceTo(target);
           console.error(
