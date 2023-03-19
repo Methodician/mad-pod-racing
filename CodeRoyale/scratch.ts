@@ -443,4 +443,81 @@ class GameState {
   }
 }
 
+class Location {
+  x: number;
+  y: number;
+  radius: number;
 
+  constructor(x: number, y: number, radius = 0) {
+    this.x = x;
+    this.y = y;
+    this.radius = radius;
+  }
+
+  sharesCenterWith = (other: Location) => {
+    return this.x === other.x && this.y === other.y;
+  };
+
+  distanceTo = (location: Location) => {
+    return this.distanceToPoint(location.x, location.y);
+  };
+
+  distanceToPoint = (x: number, y: number) => {
+    return Math.sqrt(Math.pow(this.x - x, 2) + Math.pow(this.y - y, 2));
+  };
+
+  nearest = (locations: Location[]) => {
+    let nearest: Location | null = null;
+    let nearestDistance = Number.MAX_VALUE;
+    locations.forEach((location) => {
+      const distance = this.distanceTo(location);
+      if (distance < nearestDistance) {
+        nearest = location;
+        nearestDistance = distance;
+      }
+    });
+    return { nearest, distance: nearestDistance };
+  };
+
+  /**
+   *
+   * @param x
+   * @param y
+   * @param margin added to radius to allow for some tolerance
+   * @returns boolean
+   */
+  containsPoint(x: number, y: number, margin = 0): boolean {
+    return this.distanceToPoint(x, y) <= this.radius + margin;
+  }
+
+  containsLocationCenter(other: Location, tolerance = 0): boolean {
+    return this.containsPoint(other.x, other.y, tolerance);
+  }
+
+  isWithinRadius(other: Location): boolean {
+    const distanceSquared =
+      (this.x - other.x) * (this.x - other.x) +
+      (this.y - other.y) * (this.y - other.y);
+    return (
+      distanceSquared <=
+      (this.radius + other.radius) * (this.radius + other.radius)
+    );
+  }
+}
+
+
+
+class Line {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+
+  constructor(x1: number, y1: number, x2: number, y2: number) {
+    this.x1 = x1;
+    this.y1 = y1;
+    this.x2 = x2;
+    this.y2 = y2;
+  }
+
+}

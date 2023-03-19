@@ -26,4 +26,14 @@ The game is played in a finite loop. Each loop is considered a "turn" and there 
 
 The game field is represented on a two-dimensional map 1920 units wide and 1000 units high. There are 24 building sites distributed on the map. Sites locations are generated procedurally for each new game, oriented symmetrically around the map's center. Each building site has its own radius and other statistics.
 
+## Structures
+
+towers age and lose life each turn
+
 ## Queens
+
+## Units
+
+All units age and lose life each turn
+meaning knights barracks are less effective when far from enemy queen
+Knight barracks are best built close to center, or close to enemy queen

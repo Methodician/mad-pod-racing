@@ -5,15 +5,40 @@ namespace CodeRoyale3 {
     radius: number;
 
     constructor(x: number, y: number, radius = 0) {
-      this.x = x;
-      this.y = y;
-      this.radius = radius;
+      this.x = Math.round(x);
+      this.y = Math.round(y);
+      this.radius = Math.round(radius);
     }
 
+    pointOnRadiusNearestTo(other: Location): Location {
+      if (this.sharesCenterWith(other)) {
+        return other;
+      }
+
+      const deltaX = other.x - this.x;
+      const deltaY = other.y - this.y;
+      const distanceToCenter = this.distanceTo(other);
+
+      const x = this.x + (deltaX / distanceToCenter) * this.radius;
+      const y = this.y + (deltaY / distanceToCenter) * this.radius;
+
+      return new Location(x, y);
+    }
+
+    sharesCenterWith = (other: Location) => {
+      return this.x === other.x && this.y === other.y;
+    };
+
     distanceTo = (location: Location) => {
-      return Math.sqrt(
-        Math.pow(this.x - location.x, 2) + Math.pow(this.y - location.y, 2)
-      );
+      return this.distanceToPoint(location.x, location.y);
+    };
+
+    distanceToPoint = (x: number, y: number) => {
+      return Math.sqrt(Math.pow(this.x - x, 2) + Math.pow(this.y - y, 2));
+    };
+
+    withRadiusBuffer = (buffer: number) => {
+      return new Location(this.x, this.y, this.radius + buffer);
     };
 
     nearest = (locations: Location[]) => {
@@ -29,14 +54,19 @@ namespace CodeRoyale3 {
       return { nearest, distance: nearestDistance };
     };
 
-    containsPoint(x: number, y: number): boolean {
-      const distanceSquared =
-        (this.x - x) * (this.x - x) + (this.y - y) * (this.y - y);
-      return distanceSquared <= this.radius * this.radius;
+    /**
+     *
+     * @param x
+     * @param y
+     * @param margin added to radius to allow for some tolerance
+     * @returns boolean
+     */
+    containsPoint(x: number, y: number, margin = 0): boolean {
+      return this.distanceToPoint(x, y) <= this.radius + margin;
     }
 
-    containsLocationCenter(other: Location): boolean {
-      return this.containsPoint(other.x, other.y);
+    containsLocationCenter(other: Location, tolerance = 0): boolean {
+      return this.containsPoint(other.x, other.y, tolerance);
     }
 
     isWithinRadius(other: Location): boolean {
@@ -56,6 +86,14 @@ namespace CodeRoyale3 {
     x2: number;
     y2: number;
 
+    get a() {
+      return new Location(this.x1, this.y1);
+    }
+
+    get b() {
+      return new Location(this.x2, this.y2);
+    }
+
     constructor(x1: number, y1: number, x2: number, y2: number) {
       this.x1 = x1;
       this.y1 = y1;
@@ -63,30 +101,58 @@ namespace CodeRoyale3 {
       this.y2 = y2;
     }
 
-    doesIntersectRadius = (location: Location, extraPadding = 0) => {
+    static fromLocations = (l1: Location, l2: Location) => {
+      return new Line(l1.x, l1.y, l2.x, l2.y);
+    };
+
+    extendedLine = (multiplier: number) => {
+      const { x1, y1, x2, y2 } = this;
+      return new Line(
+        x1,
+        y1,
+        x1 + (x2 - x1) * multiplier,
+        y1 + (y2 - y1) * multiplier
+      );
+    };
+
+    midPoint(): Location {
+      const midX = (this.x1 + this.x2) / 2;
+      const midY = (this.y1 + this.y2) / 2;
+      return new Location(midX, midY);
+    }
+
+    circleIntersectionPoints(circle: Location): Location[] {
       const dx = this.x2 - this.x1;
       const dy = this.y2 - this.y1;
+
       const a = dx * dx + dy * dy;
-      const b = 2 * (dx * (this.x1 - location.x) + dy * (this.y1 - location.y));
+      const b = 2 * (dx * (this.x1 - circle.x) + dy * (this.y1 - circle.y));
       const c =
-        (this.x1 - location.x) * (this.x1 - location.x) +
-        (this.y1 - location.y) * (this.y1 - location.y) -
-        location.radius * location.radius;
+        (this.x1 - circle.x) * (this.x1 - circle.x) +
+        (this.y1 - circle.y) * (this.y1 - circle.y) -
+        circle.radius * circle.radius;
 
       const discriminant = b * b - 4 * a * c;
-
-      // If the discriminant is negative, there is no intersection
       if (discriminant < 0) {
-        return false;
+        return []; // No intersection
+      } else {
+        const t1 = (-b + Math.sqrt(discriminant)) / (2 * a);
+        const t2 = (-b - Math.sqrt(discriminant)) / (2 * a);
+
+        const intersections = [];
+        if (t1 >= 0 && t1 <= 1) {
+          intersections.push(
+            new Location(this.x1 + t1 * dx, this.y1 + t1 * dy)
+          );
+        }
+        if (t2 >= 0 && t2 <= 1) {
+          intersections.push(
+            new Location(this.x1 + t2 * dx, this.y1 + t2 * dy)
+          );
+        }
+        return intersections;
       }
-
-      // Find the two points of intersection along the line
-      const t1 = (-b - Math.sqrt(discriminant)) / (2 * a);
-      const t2 = (-b + Math.sqrt(discriminant)) / (2 * a);
-
-      // Check if either intersection point is on the line segment
-      return (t1 >= 0 && t1 <= 1) || (t2 >= 0 && t2 <= 1);
-    };
+    }
   }
 
   // Defines a rectangle using two corners
@@ -167,7 +233,7 @@ namespace CodeRoyale3 {
     get towerSpecs() {
       return {
         hp: this.param1,
-        range: this.param2,
+        location: new Location(this.location.x, this.location.y, this.param2),
         isBigEnough: this.param2 > 310, // TODO: check if this is correct/useful
       };
     }
@@ -254,11 +320,12 @@ namespace CodeRoyale3 {
       ).length >=
       (countMax - countMin) * Math.pow(queen.health / 100, exponent) + countMin;
 
-    isSiteThreatenedByTowers = (site: Site, tolerance = 50) =>
-      state.enemyTowers.some(
-        (tower) =>
-          tower.location.distanceTo(site.location) <
-          tower.towerSpecs.range - tolerance
+    isSiteThreatenedByTowers = (site: Site, tolerance = -50) =>
+      state.enemyTowers.some((tower) =>
+        tower.towerSpecs.location.containsLocationCenter(
+          site.location,
+          tolerance
+        )
       );
 
     isSiteThreatenedByKnights = (site: Site, range = 220, count = 1) =>
@@ -287,21 +354,32 @@ namespace CodeRoyale3 {
         ? new Location(0, 0, 800)
         : new Location(1920, 1000, 800);
 
+    wayAroundObstacle = (obstacle: Location, currentPath: Line) => {
+      const intersections = currentPath.circleIntersectionPoints(obstacle);
+      if (intersections.length < 2) {
+        return null;
+      }
+      console.error(intersections.length);
+      const center = Line.fromLocations(
+        intersections[0],
+        intersections[1]
+      ).midPoint();
+      const surfacePoint = obstacle.pointOnRadiusNearestTo(center);
+      const newPath = Line.fromLocations(currentPath.a, surfacePoint);
+      return newPath.extendedLine(4);
+    };
+    // Tangents are wrong, or I misunderstand them and it's not what we wanted.
     findTangentPoints = (
       line: Line,
       location: Location,
-      padding = 1
+      margin = 1
     ): { tangent1: Location | null; tangent2: Location | null } => {
       const dx = line.x2 - line.x1;
       const dy = line.y2 - line.y1;
 
-      // Find the distance between the start point and the circle's center
-      const distStartToCenter = Math.sqrt(
-        (location.x - line.x1) * (location.x - line.x1) +
-          (location.y - line.y1) * (location.y - line.y1)
-      );
+      const distStartToCenter = location.distanceToPoint(line.x1, line.y1);
 
-      if (distStartToCenter <= location.radius + padding) {
+      if (distStartToCenter <= location.radius + margin) {
         return { tangent1: null, tangent2: null };
       }
 
@@ -310,7 +388,7 @@ namespace CodeRoyale3 {
 
       // Calculate the angle to reach the tangent point
       const tangentAngle = Math.asin(
-        (location.radius + padding) / distStartToCenter
+        (location.radius + margin) / distStartToCenter
       );
 
       // Find the angles of the two tangent points
@@ -319,13 +397,13 @@ namespace CodeRoyale3 {
 
       // Calculate the tangent points
       const tangent1 = new Location(
-        Math.round(location.x + (location.radius + padding) * Math.sin(angle1)),
-        Math.round(location.y - (location.radius + padding) * Math.cos(angle1))
+        Math.round(location.x + (location.radius + margin) * Math.sin(angle1)),
+        Math.round(location.y - (location.radius + margin) * Math.cos(angle1))
       );
 
       const tangent2 = new Location(
-        Math.round(location.x + (location.radius + padding) * Math.sin(angle2)),
-        Math.round(location.y - (location.radius + padding) * Math.cos(angle2))
+        Math.round(location.x + (location.radius + margin) * Math.sin(angle2)),
+        Math.round(location.y - (location.radius + margin) * Math.cos(angle2))
       );
 
       return { tangent1, tangent2 };
@@ -352,6 +430,8 @@ namespace CodeRoyale3 {
     }
 
     move = (target: Location) => {
+      console.error(target.distanceTo(queen.location));
+
       let _target = target;
       const straightPath = new Line(
         this.location.x,
@@ -366,39 +446,60 @@ namespace CodeRoyale3 {
       );
 
       for (let site of sitesByProximityToQueen) {
-        if (site.location.x === target.x && site.location.y === target.y) {
+        if (site.location.sharesCenterWith(target)) {
           continue;
         }
-        // Adding queen radius (30)
-        if (straightPath.doesIntersectRadius(site.location, 30)) {
-          const { tangent1, tangent2 } = senses.findTangentPoints(
-            straightPath,
-            target
-          );
-          if (!tangent1 || !tangent2) {
-            continue;
-          }
-          const tangent1Dist = tangent1.distanceTo(target);
-          const tangent2Dist = tangent2.distanceTo(target);
-          console.error(
-            `target: ${target.x} ${target.y}, tangent1: ${tangent1.x} ${tangent1.y}, tangent2: ${tangent2.x} ${tangent2.y}`
-          );
-          _target = tangent1Dist < tangent2Dist ? tangent1 : tangent2;
+        // queen radius is 30, so adding that to the buffer
+        const wayAround = senses.wayAroundObstacle(
+          site.location.withRadiusBuffer(30),
+          straightPath
+        );
+        if (wayAround) {
+          _target = wayAround.b;
           break;
         }
-      }
+        // const intersections = straightPath.circleIntersectionPoints(
+        //   site.location
+        //   // 30
+        // );
 
-      if (
-        state.sites.some(
-          (site) =>
-            !(site.location.x === target.x && site.location.y === target.y) &&
-            straightPath.doesIntersectRadius(site.location)
-        )
-      ) {
-        console.error(
-          `Queen is trying to move through a site when approaching: ${target.x} ${target.y}`
-        );
+        // console.error(`intersections: ${intersections}`);
+
+        // if (intersections.length === 0) {
+        //   continue;
+        // }
+
+        // const [a, b] = intersections;
+        // console.error(`a: ${JSON.stringify(a)}`);
+        // console.error(`b: ${JSON.stringify(b)}`);
+        // const center = new Line(a.x, a.y, b.x, b.y).midPoint();
+        // console.error(`center: ${JSON.stringify(center)}`);
+
+        // const surfacePoint = site.location.pointOnRadiusNearestTo(center);
+        // console.error(`surfacePoint: ${JSON.stringify(surfacePoint)}`);
+        // Adding queen radius (30)
+        // if (straightPath.doesIntersectRadius(site.location, 30)) {
+        //   console.error(
+        //     `obstacle found: ${site.location.x} ${site.location.y}`
+        //   );
+        //   const { tangent1, tangent2 } = senses.findTangentPoints(
+        //     straightPath,
+        //     site.location,
+        //     30
+        //   );
+        //   if (!tangent1 || !tangent2) {
+        //     continue;
+        //   }
+        //   const tangent1Dist = tangent1.distanceTo(target);
+        //   const tangent2Dist = tangent2.distanceTo(target);
+        //   console.error(`target: ${target.x} ${target.y}`);
+        //   console.error(`tangent1: ${tangent1.x} ${tangent1.y}`);
+        //   console.error(`tangent2: ${tangent2.x} ${tangent2.y}`);
+        //   _target = tangent1Dist < tangent2Dist ? tangent1 : tangent2;
+        //   break;
+        // }
       }
+      console.error(`target: ${target.x} ${target.y}`);
       return `MOVE ${_target.x} ${_target.y}`;
     };
 
@@ -783,7 +884,7 @@ namespace CodeRoyale3 {
       // Expand if it's a tower that's not kinda big
       if (
         touchedSite.structureType === "TOWER" &&
-        touchedSite.towerSpecs.range < 255
+        touchedSite.towerSpecs.location.radius < 255
       ) {
         return queen.build(queen.touchedSiteId, "TOWER");
       }
@@ -992,3 +1093,16 @@ namespace CodeRoyale3 {
     currentStrategy = executor.execute(currentStrategy) || currentStrategy;
   }
 }
+
+// NOTES TO SELF:
+
+// When my knight barracks is too far from the enemy queen and I have an opportunity to make one closer, I should do it.
+// I can then replace my old barracks if desired.
+
+// I'm still sometimes attempting to build mines when enemy knights are on top of it. That is dumb.
+
+// I could just always target closest or a close site to middle to build my barracks
+// because when I do a rush strategy, my barracks is in a corner and often ineffectual but
+// when I do a defensive strategy, I get closer to the middle and the knights don't die too fast
+
+// When I'm near an enemy knight barracks I may as well chase it and convert it to a tower, archer, knight, or maybe just whatever is convenient
