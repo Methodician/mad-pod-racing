@@ -65,18 +65,8 @@ namespace CodeRoyale3 {
       return this.distanceToPoint(x, y) <= this.radius + margin;
     }
 
-    containsLocationCenter(other: Location, tolerance = 0): boolean {
-      return this.containsPoint(other.x, other.y, tolerance);
-    }
-
-    isWithinRadius(other: Location): boolean {
-      const distanceSquared =
-        (this.x - other.x) * (this.x - other.x) +
-        (this.y - other.y) * (this.y - other.y);
-      return (
-        distanceSquared <=
-        (this.radius + other.radius) * (this.radius + other.radius)
-      );
+    containsLocationCenter(other: Location, margin = 0): boolean {
+      return this.containsPoint(other.x, other.y, margin);
     }
   }
 
@@ -346,7 +336,9 @@ namespace CodeRoyale3 {
 
     isSiteThreatenedByKnights = (site: Site, range = 220, count = 1) =>
       state.enemyKnights.filter(
-        (knight) => knight.location.distanceTo(site.location) < range
+        (knight) =>
+          knight.location.distanceTo(site.location) <
+          range + site.location.radius
       ).length >= count;
 
     // May deprecate in favor of point/radius approach
@@ -362,13 +354,36 @@ namespace CodeRoyale3 {
 
     hunkerCorner = () =>
       state.startLocation === "TOP_LEFT"
-        ? new Location(0, 1000, 800)
-        : new Location(1920, 0, 800);
+        ? new Location(0, 1000, 700)
+        : new Location(1920, 0, 700);
 
     startCorner = () =>
       state.startLocation === "TOP_LEFT"
         ? new Location(0, 0, 800)
         : new Location(1920, 1000, 800);
+
+    siteNearestTo = (location: Location, sites?: Site[]) => {
+      if (!sites) {
+        sites = state.sites;
+      }
+      return sites.reduce(
+        (nearest, site) =>
+          nearest.location.distanceTo(location) >
+          site.location.distanceTo(location)
+            ? site
+            : nearest,
+        sites[0]
+      );
+    };
+
+    sitesWithin = (location: Location, sites?: Site[]) => {
+      if (!sites) {
+        sites = state.sites;
+      }
+      return sites.filter((site) =>
+        location.containsLocationCenter(site.location)
+      );
+    };
 
     wayAroundObstacle = (
       obstacle: Location,
@@ -563,25 +578,15 @@ namespace CodeRoyale3 {
     !senses.isSiteThreatenedByKnights(site);
 
   class StrategyBase {
-    logDescription = "Core Strategy";
     _nextStrategy: Strategy | void = undefined;
     getUnCapturedViableSites = () =>
       state.sites.filter((site) => !site.isFriendly && site.canBeBuiltOn);
     getAllViableSites = () => state.sites.filter((site) => site.canBeBuiltOn);
 
-    siteNearestTo = (location: Location, sites?: Site[]) => {
-      if (!sites) {
-        sites = state.sites;
-      }
-      return sites.reduce(
-        (nearest, site) =>
-          nearest.location.distanceTo(location) >
-          site.location.distanceTo(location)
-            ? site
-            : nearest,
-        sites[0]
-      );
-    };
+    knightSiteLocation = new Location(1920 / 2, 1000 / 2, 300);
+    getGoodKnightSites = () => senses.sitesWithin(this.knightSiteLocation);
+
+    nextStrategy = () => this._nextStrategy;
   }
 
   class SetupStrategy extends StrategyBase implements Strategy {
@@ -600,7 +605,7 @@ namespace CodeRoyale3 {
         return null;
       }
 
-      return this.siteNearestTo(queen.location, sites);
+      return senses.siteNearestTo(queen.location, sites);
     };
 
     private getInitialKnightTarget = () =>
@@ -627,21 +632,9 @@ namespace CodeRoyale3 {
       // if we can afford 3 knights within 3 turns, build a barracks and exit setup
       if (
         trainer.turnsUntilCanAfford("KNIGHT", this.getInitialKnightTarget()) <=
-        this.getInitialKnightTarget() - 1
+        this.getInitialKnightTarget() * 2 - 2
       ) {
-        if (
-          !touchedSite.isFriendly &&
-          touchedSite.canBeBuiltOn &&
-          state.friendlyKnightBarracks.length < 1
-        ) {
-          return queen.build(queen.touchedSiteId, "BARRACKS", "KNIGHT");
-        }
-        const viableSite = this.getViableSite();
-        if (viableSite) {
-          return queen.move(viableSite.location);
-        }
-        console.error("NO VIABLE INIT SITES WTF");
-        return queen.move(senses.hunkerCorner());
+        this._nextStrategy = new BuildInitialKnightBarracksStrategy();
       }
 
       // build mine if it's decent
@@ -676,10 +669,76 @@ namespace CodeRoyale3 {
       }
       return trainer.wait();
     };
+  }
 
-    nextStrategy = () => {
-      // If queen is threated by knights, go into defensive
-      return this._nextStrategy;
+  class BuildInitialKnightBarracksStrategy
+    extends StrategyBase
+    implements Strategy
+  {
+    logDescription = "Building Knight Barracks";
+
+    private getViableSite = () => {
+      const viableSites = this.getGoodKnightSites();
+      if (viableSites.length === 0) {
+        return null;
+      }
+      console.error(viableSites.length);
+      return senses.siteNearestTo(queen.location, viableSites);
+    };
+
+    queenStep = () => {
+      if (queen.touchedSiteId === -1) {
+        // approach nearest site within build out box
+        const site = this.getViableSite();
+        if (site) {
+          return queen.move(site.location);
+        }
+        console.error("No viable site found, WAITING!!!");
+        return queen.wait();
+      }
+
+      const touchedSite = state.siteRecord[queen.touchedSiteId];
+
+      // if it's a mine that is not maxed out, expand it
+      if (shouldExpandGoldMine(touchedSite)) {
+        return queen.build(queen.touchedSiteId, "MINE");
+      }
+
+      // build a barracks and more to hunker
+      if (!touchedSite.isFriendly && touchedSite.canBeBuiltOn) {
+        if (
+          this.knightSiteLocation.containsLocationCenter(touchedSite.location)
+        ) {
+          this._nextStrategy = new BunkerStrategy();
+          return queen.build(queen.touchedSiteId, "BARRACKS", "KNIGHT");
+        }
+        if (isGoodMineSite(touchedSite)) {
+          return queen.build(queen.touchedSiteId, "MINE");
+        }
+        return queen.build(queen.touchedSiteId, "TOWER");
+      }
+
+      // If there's nothing to do at this site, move on
+      const site = this.getViableSite();
+      if (site) {
+        return queen.move(site.location);
+      }
+      console.error("No viable site found, WAITING!!!");
+      return queen.wait();
+    };
+
+    trainerStep = () => {
+      if (
+        trainer.turnsUntilCanAfford("KNIGHT", 2) === 0 &&
+        state.friendlyKnights.length > 0
+      ) {
+        return trainer.trainAt(state.friendlyKnightBarracks[0].id);
+      }
+
+      if (state.friendlyKnights.length > 0) {
+        this._nextStrategy = new BunkerStrategy();
+      }
+      return trainer.wait();
     };
   }
 
@@ -695,7 +754,7 @@ namespace CodeRoyale3 {
         return null;
       }
 
-      return this.siteNearestTo(queen.location, viableSites);
+      return senses.siteNearestTo(queen.location, viableSites);
     };
 
     queenStep = () => {
@@ -727,11 +786,12 @@ namespace CodeRoyale3 {
         }
 
         // build knight barracks if nearest friendly knight barracks is too far and this is close
-        const distanceFromEnemyQueenToNearestFriendlyKnightBarracks =
-          this.siteNearestTo(
+        const distanceFromEnemyQueenToNearestFriendlyKnightBarracks = senses
+          .siteNearestTo(
             state.enemyQueen.location,
             state.friendlyKnightBarracks
-          ).location.distanceTo(state.enemyQueen.location);
+          )
+          .location.distanceTo(state.enemyQueen.location);
 
         console.error(
           `distance to my barracks: ${distanceFromEnemyQueenToNearestFriendlyKnightBarracks}`
@@ -754,10 +814,13 @@ namespace CodeRoyale3 {
         }
 
         // build giant barracks if enemy has too many towers
+        console.error(
+          `turns until giant: ${trainer.turnsUntilCanAfford("GIANT", 1)}`
+        );
         if (
           state.enemyTowers.length > 3 &&
           state.friendlyGiantBarracks.length < 1 &&
-          trainer.turnsUntilCanAfford("GIANT", 1) < 2
+          trainer.turnsUntilCanAfford("GIANT", 1) < 5
         ) {
           return queen.build(queen.touchedSiteId, "BARRACKS", "GIANT");
         }
@@ -777,7 +840,8 @@ namespace CodeRoyale3 {
           if (
             state.incomeRate < 6 &&
             touchedSite.goldRemaining > 200 &&
-            touchedSite.maxMineSize > 1
+            touchedSite.maxMineSize > 1 &&
+            isGoodMineSite(touchedSite)
           ) {
             return queen.build(queen.touchedSiteId, "MINE");
           }
@@ -864,7 +928,7 @@ namespace CodeRoyale3 {
       }
 
       // May experiment with focusing on site nearest to the corner
-      return this.siteNearestTo(queen.location, sites);
+      return senses.siteNearestTo(queen.location, sites);
     };
 
     queenStep = () => {
@@ -1107,9 +1171,13 @@ namespace CodeRoyale3 {
 // I can then replace my old barracks if desired.
 
 // I'm still sometimes attempting to build mines when enemy knights are on top of it. That is dumb.
+// I think this is because of the site radius. I need to check if the site + its radius is too close to knights?
 
 // I could just always target closest or a close site to middle to build my barracks
 // because when I do a rush strategy, my barracks is in a corner and often ineffectual but
 // when I do a defensive strategy, I get closer to the middle and the knights don't die too fast
 
 // When I'm near an enemy knight barracks I may as well chase it and convert it to a tower, archer, knight, or maybe just whatever is convenient
+
+// I don't end up building giant barracks because I am spending all my gold on knights
+// Maybe need to re-think my selection again. Store some variable about unit types desired and adjust how long I wait to build other units
