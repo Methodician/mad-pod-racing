@@ -105,7 +105,23 @@ namespace CodeRoyale3 {
       return new Line(l1.x, l1.y, l2.x, l2.y);
     };
 
-    extendedLine = (multiplier: number) => {
+    extendedBy = (addition: number) => {
+      // Add a number of pixels to the line
+      const { x1, y1, x2, y2 } = this;
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const length = Math.sqrt(dx * dx + dy * dy);
+      const unitX = dx / length;
+      const unitY = dy / length;
+      return new Line(
+        x1 - unitX * addition,
+        y1 - unitY * addition,
+        x2 + unitX * addition,
+        y2 + unitY * addition
+      );
+    };
+
+    multipliedBy = (multiplier: number) => {
       const { x1, y1, x2, y2 } = this;
       return new Line(
         x1,
@@ -354,59 +370,31 @@ namespace CodeRoyale3 {
         ? new Location(0, 0, 800)
         : new Location(1920, 1000, 800);
 
-    wayAroundObstacle = (obstacle: Location, currentPath: Line) => {
-      const intersections = currentPath.circleIntersectionPoints(obstacle);
+    wayAroundObstacle = (
+      obstacle: Location,
+      currentPath: Line,
+      radiusBuffer = 0,
+      newPathLengthBuffer = 0
+    ) => {
+      const intersections = currentPath.circleIntersectionPoints(
+        obstacle.withRadiusBuffer(radiusBuffer)
+      );
       if (intersections.length < 2) {
         return null;
       }
-      console.error(intersections.length);
-      const center = Line.fromLocations(
+      console.error(
+        `way around ${obstacle.x}, ${obstacle.y}, ${obstacle.radius}}`
+      );
+      const mindPoint = Line.fromLocations(
         intersections[0],
         intersections[1]
       ).midPoint();
-      const surfacePoint = obstacle.pointOnRadiusNearestTo(center);
-      const newPath = Line.fromLocations(currentPath.a, surfacePoint);
-      return newPath.extendedLine(4);
-    };
-    // Tangents are wrong, or I misunderstand them and it's not what we wanted.
-    findTangentPoints = (
-      line: Line,
-      location: Location,
-      margin = 1
-    ): { tangent1: Location | null; tangent2: Location | null } => {
-      const dx = line.x2 - line.x1;
-      const dy = line.y2 - line.y1;
-
-      const distStartToCenter = location.distanceToPoint(line.x1, line.y1);
-
-      if (distStartToCenter <= location.radius + margin) {
-        return { tangent1: null, tangent2: null };
-      }
-
-      // Calculate the angle of the line segment
-      const angle = Math.atan2(dy, dx);
-
-      // Calculate the angle to reach the tangent point
-      const tangentAngle = Math.asin(
-        (location.radius + margin) / distStartToCenter
-      );
-
-      // Find the angles of the two tangent points
-      const angle1 = angle + tangentAngle;
-      const angle2 = angle - tangentAngle;
-
-      // Calculate the tangent points
-      const tangent1 = new Location(
-        Math.round(location.x + (location.radius + margin) * Math.sin(angle1)),
-        Math.round(location.y - (location.radius + margin) * Math.cos(angle1))
-      );
-
-      const tangent2 = new Location(
-        Math.round(location.x + (location.radius + margin) * Math.sin(angle2)),
-        Math.round(location.y - (location.radius + margin) * Math.cos(angle2))
-      );
-
-      return { tangent1, tangent2 };
+      const surfacePoint = obstacle.pointOnRadiusNearestTo(mindPoint);
+      const newPath = Line.fromLocations(
+        currentPath.a,
+        surfacePoint
+      ).extendedBy(newPathLengthBuffer);
+      return newPath;
     };
   }
 
@@ -432,13 +420,40 @@ namespace CodeRoyale3 {
     move = (target: Location) => {
       console.error(target.distanceTo(queen.location));
 
-      let _target = target;
-      const straightPath = new Line(
+      let straightPath = new Line(
         this.location.x,
         this.location.y,
         target.x,
         target.y
+      ).extendedBy(60);
+
+      // queen speed is 60, so making sure new target is at least 60 units away
+      // let _target = straightPath.extendedBy(60).b;
+
+      // First find path around enemy towers
+      const enemyTowersByProximityToQueen = state.enemyTowers.sort(
+        (a, b) =>
+          a.towerSpecs.location.distanceTo(queen.location) -
+          b.towerSpecs.location.distanceTo(queen.location)
       );
+
+      for (let tower of enemyTowersByProximityToQueen) {
+        if (tower.location.sharesCenterWith(target)) {
+          continue; // should never happen given current setup
+        }
+        const wayAround = senses.wayAroundObstacle(
+          tower.towerSpecs.location,
+          straightPath,
+          30,
+          60
+        );
+        if (wayAround) {
+          straightPath = wayAround;
+          break;
+        }
+      }
+
+      // Then find path around enemy any sites
       const sitesByProximityToQueen = state.sites.sort(
         (a, b) =>
           a.location.distanceTo(queen.location) -
@@ -451,54 +466,17 @@ namespace CodeRoyale3 {
         }
         // queen radius is 30, so adding that to the buffer
         const wayAround = senses.wayAroundObstacle(
-          site.location.withRadiusBuffer(30),
-          straightPath
+          site.location,
+          straightPath,
+          30,
+          60
         );
         if (wayAround) {
-          _target = wayAround.b;
+          straightPath = wayAround;
           break;
         }
-        // const intersections = straightPath.circleIntersectionPoints(
-        //   site.location
-        //   // 30
-        // );
-
-        // console.error(`intersections: ${intersections}`);
-
-        // if (intersections.length === 0) {
-        //   continue;
-        // }
-
-        // const [a, b] = intersections;
-        // console.error(`a: ${JSON.stringify(a)}`);
-        // console.error(`b: ${JSON.stringify(b)}`);
-        // const center = new Line(a.x, a.y, b.x, b.y).midPoint();
-        // console.error(`center: ${JSON.stringify(center)}`);
-
-        // const surfacePoint = site.location.pointOnRadiusNearestTo(center);
-        // console.error(`surfacePoint: ${JSON.stringify(surfacePoint)}`);
-        // Adding queen radius (30)
-        // if (straightPath.doesIntersectRadius(site.location, 30)) {
-        //   console.error(
-        //     `obstacle found: ${site.location.x} ${site.location.y}`
-        //   );
-        //   const { tangent1, tangent2 } = senses.findTangentPoints(
-        //     straightPath,
-        //     site.location,
-        //     30
-        //   );
-        //   if (!tangent1 || !tangent2) {
-        //     continue;
-        //   }
-        //   const tangent1Dist = tangent1.distanceTo(target);
-        //   const tangent2Dist = tangent2.distanceTo(target);
-        //   console.error(`target: ${target.x} ${target.y}`);
-        //   console.error(`tangent1: ${tangent1.x} ${tangent1.y}`);
-        //   console.error(`tangent2: ${tangent2.x} ${tangent2.y}`);
-        //   _target = tangent1Dist < tangent2Dist ? tangent1 : tangent2;
-        //   break;
-        // }
       }
+      const _target = straightPath.b;
       console.error(`target: ${target.x} ${target.y}`);
       return `MOVE ${_target.x} ${_target.y}`;
     };
@@ -741,18 +719,41 @@ namespace CodeRoyale3 {
       }
       // if we don't already own it and can build on it
       if (!touchedSite.isFriendly && touchedSite.canBeBuiltOn) {
-        console.error(
-          state.enemyQueen.location.distanceTo(touchedSite.location)
-        );
-        if (state.enemyQueen.location.distanceTo(touchedSite.location) < 175) {
+        // build tower if this is close to enemy queen
+        const distanceFromSiteToEnemyQueen =
+          state.enemyQueen.location.distanceTo(touchedSite.location);
+        if (distanceFromSiteToEnemyQueen < 120) {
           return queen.build(queen.touchedSiteId, "TOWER");
         }
+
+        // build knight barracks if nearest friendly knight barracks is too far and this is close
+        const distanceFromEnemyQueenToNearestFriendlyKnightBarracks =
+          this.siteNearestTo(
+            state.enemyQueen.location,
+            state.friendlyKnightBarracks
+          ).location.distanceTo(state.enemyQueen.location);
+
+        console.error(
+          `distance to my barracks: ${distanceFromEnemyQueenToNearestFriendlyKnightBarracks}`
+        );
+        console.error(`distance to this site: ${distanceFromSiteToEnemyQueen}`);
+        if (
+          distanceFromEnemyQueenToNearestFriendlyKnightBarracks > 1100 &&
+          distanceFromSiteToEnemyQueen < 770 &&
+          (touchedSite.goldRemaining < 100 || touchedSite.maxMineSize < 3)
+        ) {
+          return queen.build(queen.touchedSiteId, "BARRACKS", "KNIGHT");
+        }
+
+        // build knight barracks if we need one and can afford knights
         if (
           state.friendlyKnightBarracks.length < 1 &&
           trainer.turnsUntilCanAfford("KNIGHT", 2) < 3
         ) {
           return queen.build(queen.touchedSiteId, "BARRACKS", "KNIGHT");
         }
+
+        // build giant barracks if enemy has too many towers
         if (
           state.enemyTowers.length > 3 &&
           state.friendlyGiantBarracks.length < 1 &&
@@ -760,13 +761,19 @@ namespace CodeRoyale3 {
         ) {
           return queen.build(queen.touchedSiteId, "BARRACKS", "GIANT");
         }
+
+        // build a tower if we're threatened by knights
         if (senses.isSiteThreatenedByKnights(touchedSite, 250, 3)) {
           return queen.build(queen.touchedSiteId, "TOWER");
         }
+
+        // build a mine if it's a good site
         if (isGoodMineSite(touchedSite)) {
           return queen.build(queen.touchedSiteId, "MINE");
         }
-        if (touchedSite.isFriendly && touchedSite.structureType === "TOWER") {
+
+        // replace friendly sites with mines if it seems like a good idea
+        if (touchedSite.isFriendly) {
           if (
             state.incomeRate < 6 &&
             touchedSite.goldRemaining > 200 &&
