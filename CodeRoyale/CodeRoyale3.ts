@@ -352,6 +352,14 @@ namespace CodeRoyale3 {
           range + site.location.radius
       ).length >= count;
 
+    areTooManyKnightsInHomeBase = (count = 16, shouldScale = true) => {
+      const knightsInHere = state.enemyKnights.filter((knight) =>
+        this.homeBase().containsLocationCenter(knight.location)
+      );
+      const threshold = shouldScale ? count * (queen.health / 100) : count;
+      return knightsInHere.length > threshold;
+    };
+
     homeBase = () =>
       state.startLocation === "TOP_LEFT"
         ? new Location(0, 1000 / 2, 800)
@@ -516,7 +524,7 @@ namespace CodeRoyale3 {
   class Trainer {
     unitTrainQueue: ("KNIGHT" | "ARCHER" | "GIANT")[] = [];
 
-    queueTrining = (unitType: "KNIGHT" | "ARCHER" | "GIANT") => {
+    enqueueTrining = (unitType: "KNIGHT" | "ARCHER" | "GIANT") => {
       this.unitTrainQueue.push(unitType);
     };
 
@@ -631,7 +639,7 @@ namespace CodeRoyale3 {
     triageStep: (touchedSite?: Site) => void;
     queenStep: () => string;
     trainerStep: () => string; // If this stays super basic might do away with it and just train in base
-    getNextStrategy: () => Strategy | void;
+    getNextStrategy: () => Strategy;
     logDescription: string;
   }
 
@@ -741,12 +749,7 @@ namespace CodeRoyale3 {
       senses
         .sitesWithin(this.centralLocation)
         .filter((site) => site.canBeBuiltOn);
-
-    getNextStrategy = () => this.nextStrategy;
   }
-
-  let wasInitialKnightBarracksBuilt = false;
-  let wasInitialBuildOutCompleted = false;
 
   class DefensiveStrategy extends StrategyCore implements Strategy {
     logDescription = "Defensive Strategy";
@@ -762,7 +765,7 @@ namespace CodeRoyale3 {
     private getViableSite = () => {
       let sites: Site[] = [];
 
-      if (!wasInitialBuildOutCompleted) {
+      if (!state.wasInitialBuildOutCompleted) {
         sites = this.getViableSitesInHomeBase();
       }
       if (sites.length === 0) {
@@ -777,23 +780,20 @@ namespace CodeRoyale3 {
       return senses.siteNearestTo(queen.location, sites);
     };
 
-    private areTooManyKnightsInHomeBase = () => {
-      const knightsInHere = state.enemyKnights.filter((knight) =>
-        senses.homeBase().containsLocationCenter(knight.location)
-      );
-      const threshold = 16 * (queen.health / 100);
-      return knightsInHere.length > threshold;
-    };
-
     triageStep = () => {
       // ---Prioritize building queues---
       if (
         state.friendlyArcherBarracks.length < 1 &&
-        this.archersInBuildQueue < 1 &&
-        trainer.turnsUntilCanAfford("ARCHER", 2) < 10
+        this.archersInBuildQueue < 1
       ) {
-        this.barracksBuildQueue.push("ARCHER");
-        trainer.queueTrining("ARCHER");
+        const archerBuildTarget = queen.health < 50 ? 1 : 2;
+        if (
+          trainer.turnsUntilCanAfford("ARCHER", archerBuildTarget) <
+          archerBuildTarget * 5 - 3
+        ) {
+          this.barracksBuildQueue.push("ARCHER");
+          trainer.enqueueTrining("ARCHER");
+        }
       }
 
       if (
@@ -803,18 +803,18 @@ namespace CodeRoyale3 {
         state.enemyTowers.length > 2
       ) {
         this.barracksBuildQueue.push("GIANT");
-        trainer.queueTrining("GIANT");
+        trainer.enqueueTrining("GIANT");
       }
 
       if (
-        wasInitialKnightBarracksBuilt &&
+        state.wasInitialKnightBarracksBuilt &&
         state.friendlyArcherBarracks.length > 0 &&
         state.friendlyKnightBarracks.length < 1 &&
         this.knightsInBuildQueue < 1 &&
         trainer.turnsUntilCanAfford("KNIGHT", 2) < 8
       ) {
         this.barracksBuildQueue.push("KNIGHT");
-        trainer.queueTrining("KNIGHT");
+        trainer.enqueueTrining("KNIGHT");
       }
 
       // ---Prioritize training queues---
@@ -824,10 +824,9 @@ namespace CodeRoyale3 {
         trainer.archersInTrainQueue < this.maxArchersInQueue &&
         (state.friendlyArchers.length < 1 ||
           (state.friendlyArchers.length < 10 &&
-            state.friendlyArcherBarracks.length > 0 &&
             trainer.turnsUntilCanAfford("ARCHER", 1) < 4))
       ) {
-        trainer.queueTrining("ARCHER");
+        trainer.enqueueTrining("ARCHER");
       }
 
       if (
@@ -838,7 +837,7 @@ namespace CodeRoyale3 {
             trainer.knightsInTrainQueue < 2 &&
             trainer.turnsUntilCanAfford("KNIGHT", 2) < 4))
       ) {
-        trainer.queueTrining("KNIGHT");
+        trainer.enqueueTrining("KNIGHT");
       }
 
       if (
@@ -847,19 +846,19 @@ namespace CodeRoyale3 {
         state.enemyTowers.length / 3 >
           state.friendlyGiants.length + trainer.giantsInTrainQueue
       ) {
-        trainer.queueTrining("GIANT");
+        trainer.enqueueTrining("GIANT");
       }
 
       // ---Prioritize strategies---
       if (
-        !wasInitialKnightBarracksBuilt &&
+        !state.wasInitialKnightBarracksBuilt &&
         trainer.turnsUntilCanAfford("KNIGHT", 2) < 8 &&
         state.friendlyArchers.length > 0
       ) {
-        trainer.queueTrining("KNIGHT");
-        trainer.queueTrining("KNIGHT");
+        trainer.enqueueTrining("KNIGHT");
+        trainer.enqueueTrining("KNIGHT");
         this.nextStrategy = new BuildInitialKnightBarracksStrategy();
-      } else if (this.areTooManyKnightsInHomeBase()) {
+      } else if (senses.areTooManyKnightsInHomeBase()) {
         this.nextStrategy = new BunkerStrategy();
       } else if (
         state.friendlyArchers.length > 5 &&
@@ -869,7 +868,7 @@ namespace CodeRoyale3 {
       }
 
       if (this.getViableSitesInHomeBase().length < 3) {
-        wasInitialBuildOutCompleted = true;
+        state.wasInitialBuildOutCompleted = true;
       }
     };
 
@@ -912,10 +911,24 @@ namespace CodeRoyale3 {
     trainerStep = () => {
       return trainer.trainNext();
     };
+
+    getNextStrategy = (): Strategy =>
+      this.nextStrategy || new DefensiveStrategy();
   }
 
-  class KnightRushStartup extends StrategyCore implements Strategy {
-    logDescription = "Setting up KNIGHTS";
+  // class BuildArcherBarracksStrategy extends StrategyCore implements Strategy {}
+
+  class KnightRushStrategy extends StrategyCore implements Strategy {
+    logDescription = "Rushing with knights";
+    maxKnightsInQueue = 6;
+    maxArchersInQueue = 2;
+    maxGiantsInQueue = 1;
+
+    private shouldShiftToKnightStrategy = () =>
+      !state.wasInitialKnightBarracksBuilt &&
+      trainer.turnsUntilCanAfford("KNIGHT", this.getInitialKnightTarget()) <=
+        this.getInitialKnightTarget() * 3 - 3 &&
+      state.incomeRate > 3;
 
     private getViableSite = () => {
       let sites = this.getUnCapturedViableSites().filter((site) =>
@@ -928,7 +941,7 @@ namespace CodeRoyale3 {
       }
       if (sites.length === 0) {
         sites = this.getUnCapturedViableSites().filter((site) =>
-          this.centralLocation.containsLocationCenter(site.location)
+          senses.homeBase().containsLocationCenter(site.location)
         );
       }
       if (sites.length === 0) {
@@ -941,25 +954,76 @@ namespace CodeRoyale3 {
     private getInitialKnightTarget = () =>
       queen.health >= 75 ? 3 : queen.health >= 50 ? 2 : 1;
 
+    // Quite a bit of code duplication between strategies
+    // May be able to reduce this to defining conditions that differ between strategies
     triageStep = () => {
-      // ---Prioritize training queues---
-      const shouldShiftToKnightStrategy =
-        trainer.turnsUntilCanAfford("KNIGHT", this.getInitialKnightTarget()) <=
-          this.getInitialKnightTarget() * 3 - 3 && state.incomeRate > 3;
-
-      if (shouldShiftToKnightStrategy && this.knightsInBuildQueue < 1) {
-        while (trainer.knightsInTrainQueue < this.getInitialKnightTarget()) {
-          trainer.queueTrining("KNIGHT");
+      // ---Prioritize building queues---
+      if (
+        state.enemyKnights.length > 6 &&
+        state.friendlyArcherBarracks.length < 1 &&
+        this.archersInBuildQueue < 1
+      ) {
+        const archerBuildTarget = queen.health < 50 ? 1 : 2;
+        if (
+          trainer.turnsUntilCanAfford("ARCHER", archerBuildTarget) <
+          archerBuildTarget * 5 - 3
+        ) {
+          this.barracksBuildQueue.push("ARCHER");
+          trainer.enqueueTrining("ARCHER");
         }
       }
 
-      // ---Prioritize building queues---
-      // Since next strategy is barracks strategy which doesn't rely on build queue
-      // there is no need to modify it here
+      if (
+        state.friendlyGiantBarracks.length < 1 &&
+        this.giantsInBuildQueue < 1 &&
+        trainer.turnsUntilCanAfford("GIANT", 1) < 6 &&
+        state.enemyTowers.length > 3
+      ) {
+        this.barracksBuildQueue.push("GIANT");
+        trainer.enqueueTrining("GIANT");
+      }
 
-      // ---Prioritize strategies---
-      if (shouldShiftToKnightStrategy) {
-        this.nextStrategy = new BuildInitialKnightBarracksStrategy();
+      if (
+        state.wasInitialKnightBarracksBuilt &&
+        state.friendlyKnightBarracks.length < 1 &&
+        this.knightsInBuildQueue < 1 &&
+        trainer.turnsUntilCanAfford("KNIGHT", 1) < 4
+      ) {
+        this.barracksBuildQueue.push("KNIGHT");
+        trainer.enqueueTrining("KNIGHT");
+      }
+
+      // ---Prioritize training queues---
+      if (
+        state.friendlyArcherBarracks.length > 0 &&
+        state.enemyKnights.length > 4 &&
+        trainer.archersInTrainQueue < this.maxArchersInQueue &&
+        state.friendlyArchers.length < state.enemyKnights.length / 5
+      ) {
+        trainer.enqueueTrining("ARCHER");
+      }
+
+      if (
+        state.friendlyKnightBarracks.length > 0 &&
+        trainer.knightsInTrainQueue < this.maxKnightsInQueue &&
+        state.friendlyKnights.length < 12
+      ) {
+        trainer.enqueueTrining("KNIGHT");
+      }
+
+      if (this.shouldShiftToKnightStrategy() && this.knightsInBuildQueue < 1) {
+        while (trainer.knightsInTrainQueue < this.getInitialKnightTarget()) {
+          trainer.enqueueTrining("KNIGHT");
+        }
+      }
+
+      if (
+        state.friendlyGiantBarracks.length > 0 &&
+        trainer.giantsInTrainQueue < this.maxGiantsInQueue &&
+        state.enemyTowers.length / 3 >
+          state.friendlyGiants.length + trainer.giantsInTrainQueue
+      ) {
+        trainer.enqueueTrining("GIANT");
       }
     };
 
@@ -1002,6 +1066,25 @@ namespace CodeRoyale3 {
     trainerStep = () => {
       return trainer.trainNext();
     };
+
+    getNextStrategy = (): Strategy => {
+      if (this.shouldShiftToKnightStrategy()) {
+        console.error("---Shifting to Knight Barracks Strategy");
+        return new BuildInitialKnightBarracksStrategy();
+      } else if (senses.areTooManyKnightsInHomeBase(8)) {
+        console.error("---Shifting to Bunker Strategy");
+        return new BunkerStrategy();
+      } else if (
+        state.friendlyKnights.length > 16 &&
+        state.enemyKnights.length < 6
+      ) {
+        console.error("---Shifting to Explore Strategy");
+        return new ExploreStrategy();
+      }
+      console.error("---Staying in Knight Rush Strategy");
+      // May do away with the local var "nextStrategy"
+      return this.nextStrategy || new KnightRushStrategy();
+    };
   }
 
   class BuildInitialKnightBarracksStrategy
@@ -1027,7 +1110,7 @@ namespace CodeRoyale3 {
         trainer.knightsInTrainQueue < 1 &&
         trainer.turnsUntilCanAfford("KNIGHT", 2) <= 4
       ) {
-        trainer.queueTrining("KNIGHT");
+        trainer.enqueueTrining("KNIGHT");
       }
 
       // ---Prioritize building queues---
@@ -1036,9 +1119,8 @@ namespace CodeRoyale3 {
 
       // ---Prioritize strategies---
       if (state.friendlyKnightBarracks.length > 0) {
-        // this.nextStrategy = new BunkerStrategy();
-        wasInitialKnightBarracksBuilt = true;
-        this.nextStrategy = new DefensiveStrategy();
+        state.wasInitialKnightBarracksBuilt = true;
+        this.nextStrategy = state.initialStrategy;
       }
     };
 
@@ -1099,6 +1181,9 @@ namespace CodeRoyale3 {
     trainerStep = () => {
       return trainer.trainNext();
     };
+
+    getNextStrategy = (): Strategy =>
+      this.nextStrategy || new BuildInitialKnightBarracksStrategy();
   }
 
   class ExploreStrategy extends StrategyCore implements Strategy {
@@ -1128,7 +1213,7 @@ namespace CodeRoyale3 {
         trainer.turnsUntilCanAfford("GIANT", 1) <= 3
       ) {
         // We can afford a giant, have a barracks, and we don't have enough giants
-        trainer.queueTrining("GIANT");
+        trainer.enqueueTrining("GIANT");
       }
 
       if (
@@ -1139,7 +1224,7 @@ namespace CodeRoyale3 {
         // May as well train knights when we can afford it.
         // May want to include consideration of how far enemy queen
         // is from nearest friendly knight barracks
-        trainer.queueTrining("KNIGHT");
+        trainer.enqueueTrining("KNIGHT");
       }
 
       // ---Prioritize building queues---
@@ -1217,13 +1302,13 @@ namespace CodeRoyale3 {
       return trainer.trainNext();
     };
 
-    getNextStrategy = () => {
+    getNextStrategy = (): Strategy => {
       // if the queen is threatened by MANY knights, hunker in bunker
       if (senses.isQueenThreatenedByKnights(150, 600, 4, 21)) {
         return new BunkerStrategy();
       }
 
-      return;
+      return this.nextStrategy || new ExploreStrategy();
     };
   }
 
@@ -1283,7 +1368,7 @@ namespace CodeRoyale3 {
       ) {
         // We can afford archers and have a barracks, and aren't training them.
         // This is a defensive strategy, so we want to train archers.
-        trainer.queueTrining("ARCHER");
+        trainer.enqueueTrining("ARCHER");
       }
 
       if (
@@ -1292,7 +1377,7 @@ namespace CodeRoyale3 {
         trainer.knightsInTrainQueue < 2
       ) {
         // We could train some knights without fret, so why not...
-        trainer.queueTrining("KNIGHT");
+        trainer.enqueueTrining("KNIGHT");
       }
 
       // ---prioritize building queues---
@@ -1310,7 +1395,7 @@ namespace CodeRoyale3 {
 
       // ---prioritize strategies---
       if (!this.areTooManyKnightsInHomeBase()) {
-        this.nextStrategy = new DefensiveStrategy();
+        this.nextStrategy = state.initialStrategy;
       }
     };
 
@@ -1349,6 +1434,8 @@ namespace CodeRoyale3 {
     trainerStep = () => {
       return trainer.trainNext();
     };
+
+    getNextStrategy = (): Strategy => this.nextStrategy || new BunkerStrategy();
   }
 
   //   class GoldDiggerStrategy implements Strategy {}
@@ -1357,7 +1444,19 @@ namespace CodeRoyale3 {
     gold = 0;
     siteRecord: Record<number, Site> = {};
     units: Unit[] = [];
-    startLocation: "TOP_LEFT" | "BOTTOM_RIGHT" | null = null;
+    wasInitialKnightBarracksBuilt = false;
+    wasInitialBuildOutCompleted = false;
+    private _startLocation: "TOP_LEFT" | "BOTTOM_RIGHT" | null = null;
+    get startLocation() {
+      if (!this._startLocation) {
+        throw new Error("Start location not set yet!");
+      }
+      return this._startLocation;
+    }
+    private _initialQueenHealth = 0;
+    get initialQueenHealth() {
+      return this._initialQueenHealth;
+    }
 
     private static instance: GameState;
     private constructor() {}
@@ -1367,6 +1466,14 @@ namespace CodeRoyale3 {
       }
       return GameState.instance;
     }
+
+    get initialStrategy(): Strategy {
+      return this.initialQueenHealth > 50
+        ? new DefensiveStrategy()
+        : new KnightRushStrategy();
+    }
+
+    currentStrategy: Strategy = this.initialStrategy;
 
     update = () => {
       const inputs: string[] = readline().split(" ");
@@ -1392,9 +1499,16 @@ namespace CodeRoyale3 {
         const unitType: number = parseInt(inputs[3]); // -1 = QUEEN, 0 = KNIGHT, 1 = ARCHER, 2 = GIANT
         const health: number = parseInt(inputs[4]);
         this.units.push(new Unit(x, y, health, owner, unitType));
-        if (owner === 0 && unitType === -1 && this.startLocation === null) {
+        if (owner === 0 && unitType === -1) {
+          // It was our queen
           // The game just started. Store init variables
-          this.startLocation = x < 500 ? "TOP_LEFT" : "BOTTOM_RIGHT";
+          if (this._startLocation === null) {
+            this._startLocation = x < 500 ? "TOP_LEFT" : "BOTTOM_RIGHT";
+          }
+          if (this._initialQueenHealth === 0) {
+            this._initialQueenHealth = health;
+            this.currentStrategy = this.initialStrategy;
+          }
         }
       }
     };
@@ -1486,7 +1600,7 @@ namespace CodeRoyale3 {
   const executor = new Executor();
   const trainer = new Trainer();
 
-  let currentStrategy: Strategy = new DefensiveStrategy();
+  // let currentStrategy: Strategy = new DefensiveStrategy();
 
   // game init
   const numSites: number = parseInt(readline());
@@ -1502,7 +1616,7 @@ namespace CodeRoyale3 {
   // game loop
   while (true) {
     state.update();
-    currentStrategy = executor.execute(currentStrategy) || currentStrategy;
+    state.currentStrategy = executor.execute(state.currentStrategy);
   }
 }
 
