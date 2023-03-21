@@ -360,20 +360,22 @@ namespace CodeRoyale3 {
       return knightsInHere.length > threshold;
     };
 
-    homeBase = () =>
-      state.startLocation === "TOP_LEFT"
-        ? new Location(0, 1000 / 2, 800)
-        : new Location(1920, 1000 / 2, 800);
+    centralPark = (radius = 400) => new Location(1920 / 2, 1000 / 2, radius);
 
-    hunkerCorner = () =>
+    homeBase = (radius = 800) =>
       state.startLocation === "TOP_LEFT"
-        ? new Location(0, 1000, 700)
-        : new Location(1920, 0, 700);
+        ? new Location(0, 1000 / 2, radius)
+        : new Location(1920, 1000 / 2, radius);
 
-    startCorner = () =>
+    hunkerCorner = (radius = 700) =>
       state.startLocation === "TOP_LEFT"
-        ? new Location(0, 0, 800)
-        : new Location(1920, 1000, 800);
+        ? new Location(0, 1000, radius)
+        : new Location(1920, 0, radius);
+
+    startCorner = (radius = 800) =>
+      state.startLocation === "TOP_LEFT"
+        ? new Location(0, 0, radius)
+        : new Location(1920, 1000, radius);
 
     siteNearestTo = (location: Location, sites?: Site[]) => {
       if (!sites) {
@@ -752,11 +754,9 @@ namespace CodeRoyale3 {
 
     getAllViableSites = () => state.sites.filter((site) => site.canBeBuiltOn);
 
-    centralLocation = new Location(1920 / 2, 1000 / 2, 310);
-
     getGoodKnightSites = () =>
       senses
-        .sitesWithin(this.centralLocation)
+        .sitesWithin(senses.centralPark())
         .filter((site) => site.canBeBuiltOn);
   }
   class KnightRushStrategy extends StrategyCore implements Strategy {
@@ -784,6 +784,14 @@ namespace CodeRoyale3 {
         sites = this.getUnCapturedViableSites().filter((site) =>
           senses.homeBase().containsLocationCenter(site.location)
         );
+      }
+      if (sites.length === 0) {
+        sites = this.getUnCapturedViableSites().filter((site) =>
+          senses.centralPark().containsLocationCenter(site.location)
+        );
+      }
+      if (sites.length === 0) {
+        sites = this.getUnCapturedViableSites();
       }
       if (sites.length === 0) {
         return null;
@@ -911,7 +919,7 @@ namespace CodeRoyale3 {
     getNextStrategy = (): Strategy => {
       if (this.shouldShiftToKnightStrategy()) {
         console.error("---Shifting to Knight Barracks Strategy");
-        return new BuildInitialKnightBarracksStrategy();
+        return new BuildKnightBarracksStrategy();
       } else if (senses.areTooManyKnightsInHomeBase(8)) {
         console.error("---Shifting to Bunker Strategy");
         return new BunkerStrategy();
@@ -1027,28 +1035,6 @@ namespace CodeRoyale3 {
       ) {
         trainer.enqueueTrining("GIANT");
       }
-
-      // ---Prioritize strategies---
-      if (
-        !state.wasInitialKnightBarracksBuilt &&
-        trainer.turnsUntilCanAfford("KNIGHT", 2) < 8 &&
-        state.friendlyArchers.length > 0
-      ) {
-        trainer.enqueueTrining("KNIGHT");
-        trainer.enqueueTrining("KNIGHT");
-        this.nextStrategy = new BuildInitialKnightBarracksStrategy();
-      } else if (senses.areTooManyKnightsInHomeBase()) {
-        this.nextStrategy = new BunkerStrategy();
-      } else if (
-        state.friendlyArchers.length > 5 &&
-        state.enemyKnights.length < 5
-      ) {
-        this.nextStrategy = new ExploreStrategy();
-      }
-
-      if (this.getViableSitesInHomeBase().length < 3) {
-        state.wasInitialBuildOutCompleted = true;
-      }
     };
 
     queenStep = () => {
@@ -1091,20 +1077,35 @@ namespace CodeRoyale3 {
       return trainer.trainNext();
     };
 
-    getNextStrategy = (): Strategy =>
-      this.nextStrategy || new DefensiveStrategy();
+    getNextStrategy = (): Strategy => {
+      // May want to drop the nextStrategy var
+      if (
+        !state.wasInitialKnightBarracksBuilt &&
+        trainer.turnsUntilCanAfford("KNIGHT", 2) < 8 &&
+        state.friendlyArchers.length > 0
+      ) {
+        trainer.enqueueTrining("KNIGHT");
+        trainer.enqueueTrining("KNIGHT");
+        this.nextStrategy = new BuildKnightBarracksStrategy();
+      } else if (senses.areTooManyKnightsInHomeBase(18)) {
+        this.nextStrategy = new BunkerStrategy();
+      } else if (
+        state.friendlyArchers.length > 5 &&
+        state.enemyKnights.length < 5
+      ) {
+        this.nextStrategy = new ExploreStrategy();
+      }
+
+      if (this.getViableSitesInHomeBase().length < 3) {
+        state.wasInitialBuildOutCompleted = true;
+      }
+
+      return this.nextStrategy || new DefensiveStrategy();
+    };
   }
 
   class BunkerStrategy extends StrategyCore implements Strategy {
     logDescription = "Hunkering in Bunker!";
-
-    private areTooManyKnightsInHomeBase = () => {
-      const knightsInHere = state.enemyKnights.filter((knight) =>
-        senses.homeBase().containsLocationCenter(knight.location)
-      );
-      const threshold = 13 * (queen.health / 100);
-      return knightsInHere.length > threshold;
-    };
 
     private areTooManyKnightsInHunkerCorner = (
       minKnights: number,
@@ -1156,11 +1157,6 @@ namespace CodeRoyale3 {
         // We can probably afford some knights and this is a defensive strategy.
         // Let's build some knights.
         this.barracksBuildQueue.push("ARCHER");
-      }
-
-      // ---prioritize strategies---
-      if (!this.areTooManyKnightsInHomeBase()) {
-        this.nextStrategy = state.initialStrategy;
       }
 
       // ---prioritize training queues---
@@ -1231,16 +1227,19 @@ namespace CodeRoyale3 {
       return trainer.trainNext();
     };
 
-    getNextStrategy = (): Strategy => this.nextStrategy || new BunkerStrategy();
+    getNextStrategy = (): Strategy => {
+      // May want to drop the nextStrategy var
+      if (!senses.areTooManyKnightsInHomeBase(13)) {
+        this.nextStrategy = state.initialStrategy;
+      }
+      return this.nextStrategy || new BunkerStrategy();
+    };
   }
 
   // class BuildArcherBarracksStrategy extends StrategyCore implements Strategy {}
   // May want to combine barracks strategies. It's generally good to have them closer to the middle
   // I could add a range so the knight barracks gets centralized but the others get just near by center
-  class BuildInitialKnightBarracksStrategy
-    extends StrategyCore
-    implements Strategy
-  {
+  class BuildKnightBarracksStrategy extends StrategyCore implements Strategy {
     logDescription = "Building Knight Barracks";
 
     private getViableSite = () => {
@@ -1294,7 +1293,7 @@ namespace CodeRoyale3 {
             touchedSite.structureType === "BARRACKS" &&
             touchedSite.barracksSpecs.type === "KNIGHT"
           ) &&
-          this.centralLocation.containsLocationCenter(touchedSite.location)
+          senses.centralPark().containsLocationCenter(touchedSite.location)
         ) {
           return queen.build(queen.touchedSiteId, "BARRACKS", "KNIGHT");
         }
@@ -1333,7 +1332,7 @@ namespace CodeRoyale3 {
     };
 
     getNextStrategy = (): Strategy =>
-      this.nextStrategy || new BuildInitialKnightBarracksStrategy();
+      this.nextStrategy || new BuildKnightBarracksStrategy();
   }
 
   //   class GoldDiggerStrategy implements Strategy {}
